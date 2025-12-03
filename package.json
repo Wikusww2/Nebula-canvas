@@ -1,23 +1,16 @@
 {
-  "name": "nebula-canvas",
+  "name": "nebula-canvas-monorepo",
   "private": true,
-  "version": "0.0.0",
-  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "@google/genai": "^1.30.0",
-    "lucide-react": "^0.555.0"
+    "dev": "concurrently \"npm run dev --workspace=@nebula/backend\" \"npm run dev --workspace=@nebula/frontend\"",
+    "build": "npm run build --workspaces",
+    "test": "npm run test --workspaces"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "@types/node": "^24.10.1",
+    "concurrently": "^9.2.1"
   }
 }

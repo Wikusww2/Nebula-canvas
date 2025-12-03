@@ -1,0 +1,77 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id        String   @id @default(uuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  canvases  Canvas[]
+}
+
+model Canvas {
+  id        String   @id @default(uuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id])
+  blocks    Block[]
+}
+
+model Block {
+  id          String   @id @default(uuid())
+  canvasId    String
+  type        String   // "TEXT" | "IMAGE"
+  title       String
+  modelId     String
+  positionX   Float
+  positionY   Float
+  config      Json
+  outputRefId String?
+  isStale     Boolean  @default(false)
+  canvas      Canvas   @relation(fields: [canvasId], references: [id])
+  
+  // Relations for connections
+  outgoingConnections Connection[] @relation("FromBlock")
+  incomingConnections Connection[] @relation("ToBlock")
+  generations         Generation[]
+}
+
+model Connection {
+  id          String @id @default(uuid())
+  fromBlockId String
+  toBlockId   String
+  kind        String // "TEXT_TO_TEXT" | "TEXT_TO_IMAGE" | "IMAGE_TO_IMAGE"
+  
+  fromBlock   Block  @relation("FromBlock", fields: [fromBlockId], references: [id])
+  toBlock     Block  @relation("ToBlock", fields: [toBlockId], references: [id])
+}
+
+model Generation {
+  id         String   @id @default(uuid())
+  blockId    String
+  modelId    String
+  createdAt  DateTime @default(now())
+  payload    Json
+  textOutput String?
+  assetId    String?
+  
+  block      Block    @relation(fields: [blockId], references: [id])
+  asset      Asset?   @relation(fields: [assetId], references: [id])
+}
+
+model Asset {
+  id        String   @id @default(uuid())
+  kind      String   @default("IMAGE")
+  mimeType  String
+  urlOrPath String
+  width     Int
+  height    Int
+  meta      Json
+  
+  generations Generation[]
+}

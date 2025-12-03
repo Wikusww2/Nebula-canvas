@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  background-color: #050607;
+  color: #f8f8fb;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+  background-color: #050607;
+  color: #f8f8fb;
+  overflow: hidden;
+}
+
+.font-mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+button {
+  outline: none;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #111318;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #282c36;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3fa6ff;
+}
+
+/* Connection pulse for active flows into output nodes */
+@keyframes connectionPulse {
+  to {
+    stroke-dashoffset: -40;
+  }
+}
+.connection-pulse {
+  stroke-dasharray: 6 12;
+  animation: connectionPulse 1s linear infinite;
+}
+
+/* Output node pulse while generating */
+@keyframes nodePulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(63, 166, 255, 0.35);
+    opacity: 0.9;
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgba(63, 166, 255, 0);
+    opacity: 0.6;
+  }
+  100% {
+    box-shadow: 0 0 0 18px rgba(63, 166, 255, 0);
+    opacity: 0;
+  }
+}
+.node-pulse-ring {
+  border: 1px solid rgba(63, 166, 255, 0.5);
+  box-shadow: 0 0 0 0 rgba(63, 166, 255, 0.35);
+  animation: nodePulse 1.4s ease-out infinite;
+}
