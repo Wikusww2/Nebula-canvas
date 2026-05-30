@@ -16,6 +16,10 @@ import {
   X,
   Plus,
   Cloud,
+  Copy,
+  Download,
+  Upload,
+  Wand2,
 } from 'lucide-react';
 import { MODEL_LIBRARY, ModelConfig } from '../../shared/src/models';
 
@@ -184,6 +188,78 @@ const defaultView = { x: 0, y: 0, zoom: 1 };
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3001';
 const DEMO_CANVAS = INITIAL_DATA;
 const CLEAN_CANVAS: CanvasData = { blocks: [], connections: [] };
+const MENU_WIDTH = 320;
+const MENU_HEIGHT = 470;
+
+const createId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const cloneCanvasData = (canvas: CanvasData): CanvasData => ({
+  blocks: canvas.blocks.map((block) => ({ ...block, content: { ...block.content } })),
+  connections: canvas.connections.map((connection) => ({ ...connection })),
+});
+
+const safeSetLocalStorage = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    console.warn(`Failed to save ${key}`, error);
+    return false;
+  }
+};
+
+const getDownstreamBlockIds = (connections: Connection[], rootId: string) => {
+  const visited = new Set<string>();
+  const queue = connections.filter((connection) => connection.from === rootId).map((connection) => connection.to);
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+    queue.push(...connections.filter((connection) => connection.from === current).map((connection) => connection.to));
+  }
+
+  return visited;
+};
+
+const wouldCreateCycle = (connections: Connection[], fromId: string, toId: string) =>
+  getDownstreamBlockIds(connections, toId).has(fromId);
+
+const normalizeImportedCanvas = (value: unknown): CanvasData | null => {
+  const candidate = value as Partial<CanvasData>;
+  if (!candidate || !Array.isArray(candidate.blocks) || !Array.isArray(candidate.connections)) return null;
+
+  const blockIds = new Set<string>();
+  const blocks = candidate.blocks
+    .filter((block: any) => block && typeof block.id === 'string' && (block.type === 'TEXT' || block.type === 'IMAGE'))
+    .map((block: any) => {
+      blockIds.add(block.id);
+      return {
+        id: block.id,
+        type: block.type,
+        title: typeof block.title === 'string' ? block.title : block.type === 'TEXT' ? 'Imported Prompt' : 'Imported Image',
+        role: block.role === 'input' || block.role === 'output' ? block.role : 'standard',
+        systemPrompt: typeof block.systemPrompt === 'string' ? block.systemPrompt : '',
+        x: Number.isFinite(block.x) ? block.x : 0,
+        y: Number.isFinite(block.y) ? block.y : 0,
+        width: Number.isFinite(block.width) ? block.width : 320,
+        content: block.content && typeof block.content === 'object' ? block.content : block.type === 'TEXT' ? { text: '' } : { url: '', caption: '' },
+        status: 'idle' as BlockStatus,
+        isStale: Boolean(block.isStale),
+        modelId: typeof block.modelId === 'string' ? block.modelId : block.type === 'TEXT' ? 'gpt-5-nano' : 'gemini-3-pro-image-preview',
+      };
+    });
+
+  const connections = candidate.connections
+    .filter((connection: any) => connection && blockIds.has(connection.from) && blockIds.has(connection.to) && connection.from !== connection.to)
+    .map((connection: any) => ({
+      id: typeof connection.id === 'string' ? connection.id : createId('c'),
+      from: connection.from,
+      to: connection.to,
+    }));
+
+  return { blocks, connections };
+};
 
 interface IconButtonProps {
   icon: React.ComponentType<{ size?: number; className?: string }>;
@@ -624,10 +700,14 @@ const TopBar: React.FC<{
   showGrid: boolean;
   onResetView: () => void;
   onRunSelected: () => void;
+  onRunOutputs: () => void;
+  onDuplicateSelected: () => void;
+  onExport: () => void;
+  onImport: () => void;
   onShare: () => void;
   onHome: () => void;
   projectName: string;
-}> = ({ onFit, onToggleGrid, showGrid, onResetView, onRunSelected, onShare, onHome, projectName }) => (
+}> = ({ onFit, onToggleGrid, showGrid, onResetView, onRunSelected, onRunOutputs, onDuplicateSelected, onExport, onImport, onShare, onHome, projectName }) => (
   <div className="fixed top-0 left-0 w-full h-14 z-50 flex items-center justify-between px-6 pointer-events-none">
     <div className="absolute inset-0 bg-gradient-to-b from-[#050607] to-transparent opacity-90" />
     <div className="pointer-events-auto relative z-10 flex items-center gap-4">
@@ -651,10 +731,14 @@ const TopBar: React.FC<{
 
     <div className="pointer-events-auto relative z-10 flex items-center gap-2 bg-[#111318]/80 backdrop-blur-md p-1 rounded-full border border-white/10 shadow-xl">
       <IconButton icon={Play} title="Run selected block (Ctrl/Cmd + Enter)" onClick={onRunSelected} />
+      <IconButton icon={Wand2} title="Run all output blocks" onClick={onRunOutputs} />
+      <IconButton icon={Copy} title="Duplicate selected block (Ctrl/Cmd + D)" onClick={onDuplicateSelected} />
       <IconButton icon={Maximize} title="Fit to content" onClick={onFit} />
       <IconButton icon={Grid} title="Toggle grid" active={showGrid} onClick={onToggleGrid} />
       <div className="w-[1px] h-4 bg-white/10 mx-1" />
       <IconButton icon={RotateCcw} title="Reset view" onClick={onResetView} />
+      <IconButton icon={Download} title="Export canvas" onClick={onExport} />
+      <IconButton icon={Upload} title="Import canvas" onClick={onImport} />
     </div>
 
     <div className="pointer-events-auto relative z-10 flex items-center gap-3">
@@ -1057,6 +1141,7 @@ export default function App() {
   const blockDrag = useRef<{ id: string; offsetX: number; offsetY: number } | null>(null);
   const spaceHeld = useRef(false);
   const toastTimer = useRef<number | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
   const storageKey = currentProject ? `${STORAGE_KEY}-${currentProject.id}` : STORAGE_KEY;
   const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
 
@@ -1085,7 +1170,7 @@ export default function App() {
     (type: BlockType, position?: { x: number; y: number }, role: Block['role'] = 'standard') => {
       const basePos = position ?? screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
       const newBlock: Block = {
-        id: `b-${Date.now()}`,
+        id: createId('b'),
         type,
         title: type === 'TEXT' ? 'New Prompt' : 'New Image',
         role,
@@ -1093,9 +1178,9 @@ export default function App() {
         x: snap(basePos.x),
         y: snap(basePos.y),
         width: 320,
-        content: type === 'TEXT' ? { text: '' } : { url: '', caption: 'Ready to generate...' },
-        status: 'idle',
-        isStale: true,
+        content: type === 'TEXT' ? { text: '' } : { url: '', caption: role === 'input' ? 'Drop a reference image here.' : 'Ready to generate...' },
+        status: role === 'input' ? 'success' : 'idle',
+        isStale: role !== 'input',
         modelId: type === 'TEXT' ? 'gpt-5-nano' : 'gemini-3-pro-image-preview',
       };
 
@@ -1129,7 +1214,10 @@ export default function App() {
     (blockId: string, modelId: string) => {
       updateData((prev) => ({
         ...prev,
-        blocks: prev.blocks.map((b) => (b.id === blockId ? { ...b, modelId } : b)),
+        blocks: prev.blocks.map((b) => {
+          if (b.id === blockId) return { ...b, modelId, isStale: true, status: 'idle' };
+          return getDownstreamBlockIds(prev.connections, blockId).has(b.id) ? { ...b, isStale: true, status: 'idle' } : b;
+        }),
       }));
       setModelMenu(null);
       showToast('Model updated');
@@ -1141,7 +1229,7 @@ export default function App() {
     (blockId: string) => {
       updateData((prev) => ({
         ...prev,
-        blocks: prev.blocks.map((b) => (prev.connections.some((c) => c.from === blockId && c.to === b.id) ? { ...b, isStale: true } : b)),
+        blocks: prev.blocks.map((b) => (getDownstreamBlockIds(prev.connections, blockId).has(b.id) ? { ...b, isStale: true, status: 'idle' } : b)),
       }));
     },
     [updateData],
@@ -1158,6 +1246,13 @@ export default function App() {
         const current = dataRef.current;
         const block = current.blocks.find((b) => b.id === id);
         if (!block) return;
+        if (block.role === 'input') {
+          updateData((prev) => ({
+            ...prev,
+            blocks: prev.blocks.map((b) => (b.id === id ? { ...b, status: 'success', isStale: false } : b)),
+          }));
+          return;
+        }
 
         const upstreamIds = current.connections.filter((c) => c.to === id).map((c) => c.from);
         const forceUpstream = block.role === 'output';
@@ -1297,7 +1392,13 @@ export default function App() {
             blocks: prev.blocks.map((b) => (b.id === id ? { ...b, status: 'error' } : b)),
           }));
           console.error(error);
-          showToast(`Generation failed. Is the backend running at ${API_BASE}?`);
+          const message = String(error?.message || '');
+          if (message.toLowerCase().includes('api key')) {
+            showToast('Add an API key in .env.local to run AI generation.', 3500);
+          } else {
+            showToast(`Generation failed. Check the backend at ${API_BASE}.`, 3500);
+          }
+          return;
         }
 
         const downstreamIds = dataRef.current.connections.filter((c) => c.from === id).map((c) => c.to);
@@ -1387,7 +1488,10 @@ export default function App() {
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
-    setContextMenu({ x: e.clientX, y: e.clientY });
+    setContextMenu({
+      x: Math.min(e.clientX, window.innerWidth - MENU_WIDTH - 12),
+      y: Math.min(e.clientY, window.innerHeight - MENU_HEIGHT - 12),
+    });
     setConnectingFrom(null);
     setDraftConnection(null);
   };
@@ -1453,13 +1557,19 @@ export default function App() {
       updateData((prev) => {
         const exists = prev.connections.some((c) => c.from === fromId && c.to === toId);
         if (exists) return prev;
+        if (wouldCreateCycle(prev.connections, fromId, toId)) {
+          showToast('That connection would create a loop.');
+          return prev;
+        }
+        const downstream = getDownstreamBlockIds([...prev.connections, { id: 'draft', from: fromId, to: toId }], fromId);
         return {
           ...prev,
-          connections: [...prev.connections, { id: `c-${Date.now()}`, from: fromId, to: toId }],
+          connections: [...prev.connections, { id: createId('c'), from: fromId, to: toId }],
+          blocks: prev.blocks.map((block) => (downstream.has(block.id) ? { ...block, isStale: true, status: 'idle' } : block)),
         };
       });
     },
-    [updateData],
+    [showToast, updateData],
   );
 
   const fitToContent = useCallback(() => {
@@ -1506,7 +1616,7 @@ export default function App() {
       reader.onload = () => {
         const url = typeof reader.result === 'string' ? reader.result : '';
         const newAsset: AssetItem = {
-          id: `a-${Date.now()}`,
+          id: createId('a'),
           name: file.name,
           url,
           createdAt: new Date().toISOString(),
@@ -1522,9 +1632,14 @@ export default function App() {
   const addAssetFromUrl = useCallback(
     (url: string) => {
       if (!url) return;
+      const isValidImageSource = url.startsWith('data:image/') || /^https?:\/\/\S+$/i.test(url);
+      if (!isValidImageSource) {
+        showToast('Use a valid image URL.');
+        return;
+      }
       const newAsset: AssetItem = {
-        id: `a-${Date.now()}`,
-        name: 'Image',
+        id: createId('a'),
+        name: new URL(url, window.location.href).hostname || 'Image',
         url,
         createdAt: new Date().toISOString(),
       };
@@ -1541,6 +1656,11 @@ export default function App() {
         showToast('Select an image block to apply');
         return;
       }
+      const selectedBlock = dataRef.current.blocks.find((block) => block.id === selectedId);
+      if (!selectedBlock || selectedBlock.type !== 'IMAGE') {
+        showToast('Select an image block to apply');
+        return;
+      }
       updateData((prev) => ({
         ...prev,
         blocks: prev.blocks.map((b) =>
@@ -1549,9 +1669,10 @@ export default function App() {
             : b,
         ),
       }));
+      markDownstreamStale(selectedId);
       showToast('Asset applied to block');
     },
-    [selectedIds, showToast, updateData],
+    [markDownstreamStale, selectedIds, showToast, updateData],
   );
 
   const runSelected = useCallback(() => {
@@ -1562,6 +1683,84 @@ export default function App() {
       showToast('Select a block to run');
     }
   }, [runBlock, selectedIds, showToast]);
+
+  const runOutputBlocks = useCallback(async () => {
+    const outputs = dataRef.current.blocks.filter((block) => block.role === 'output');
+    const targets = outputs.length ? outputs : dataRef.current.blocks.filter((block) => !dataRef.current.connections.some((connection) => connection.from === block.id));
+    if (!targets.length) {
+      showToast('Add an output block or terminal block to run.');
+      return;
+    }
+    for (const target of targets) {
+      await runBlock(target.id);
+    }
+  }, [runBlock, showToast]);
+
+  const duplicateSelectedBlock = useCallback(() => {
+    const selectedId = Array.from(selectedIds)[0];
+    const block = dataRef.current.blocks.find((candidate) => candidate.id === selectedId);
+    if (!block) {
+      showToast('Select a block to duplicate');
+      return;
+    }
+    const duplicate: Block = {
+      ...block,
+      id: createId('b'),
+      title: `${block.title} copy`,
+      x: snap(block.x + 48),
+      y: snap(block.y + 48),
+      content: { ...block.content },
+      status: block.role === 'input' ? block.status : 'idle',
+      isStale: block.role !== 'input',
+    };
+    updateData((prev) => ({ ...prev, blocks: [...prev.blocks, duplicate] }));
+    setSelectedIds(new Set([duplicate.id]));
+    showToast('Block duplicated');
+  }, [selectedIds, showToast, snap, updateData]);
+
+  const exportCanvas = useCallback(() => {
+    const payload = {
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      project: currentProject,
+      data: dataRef.current,
+      view,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    const safeName = (currentProject?.name || 'nebula-canvas').replace(/[^a-z0-9-_]+/gi, '-').replace(/^-|-$/g, '') || 'nebula-canvas';
+    link.href = url;
+    link.download = `${safeName}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    showToast('Canvas exported');
+  }, [currentProject, showToast, view]);
+
+  const importCanvasFile = useCallback(
+    async (file: File) => {
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const imported = normalizeImportedCanvas(parsed.data ?? parsed);
+        if (!imported) {
+          showToast('Could not import that canvas file.');
+          return;
+        }
+        updateData(() => imported);
+        dataRef.current = imported;
+        if (parsed.view && Number.isFinite(parsed.view.x) && Number.isFinite(parsed.view.y) && Number.isFinite(parsed.view.zoom)) {
+          setView(parsed.view);
+        }
+        setSelectedIds(new Set());
+        showToast('Canvas imported');
+      } catch (error) {
+        console.error(error);
+        showToast('Could not import that canvas file.');
+      }
+    },
+    [showToast, updateData],
+  );
 
   const getProjectState = useCallback((project: ProjectMeta) => {
     try {
@@ -1582,25 +1781,32 @@ export default function App() {
       setCurrentProject(project);
       setMode('canvas');
       const state = getProjectState(project);
-      setData(state.data);
-      dataRef.current = state.data;
+      const nextData = cloneCanvasData(state.data);
+      setData(nextData);
+      dataRef.current = nextData;
       setView(state.view);
+      setSelectedIds(new Set());
+      setContextMenu(null);
+      setAssetsOpen(false);
+      setModelMenu(null);
     },
     [getProjectState],
   );
 
   const createProject = useCallback(
     (name: string, seed: CanvasData) => {
-      const project: ProjectMeta = { id: `p-${Date.now()}`, name, updatedAt: new Date().toISOString() };
+      const project: ProjectMeta = { id: createId('p'), name, updatedAt: new Date().toISOString() };
+      const seededData = cloneCanvasData(seed);
       const nextProjects = [...projects, project];
       setProjects(nextProjects);
-      localStorage.setItem(PROJECTS_KEY, JSON.stringify(nextProjects));
+      safeSetLocalStorage(PROJECTS_KEY, JSON.stringify(nextProjects));
       setCurrentProject(project);
-      setData(seed);
-      dataRef.current = seed;
+      setData(seededData);
+      dataRef.current = seededData;
       setView(defaultView);
       setMode('canvas');
-      localStorage.setItem(`${STORAGE_KEY}-${project.id}`, JSON.stringify({ data: seed, view: defaultView }));
+      setSelectedIds(new Set());
+      safeSetLocalStorage(`${STORAGE_KEY}-${project.id}`, JSON.stringify({ data: seededData, view: defaultView }));
     },
     [projects],
   );
@@ -1611,7 +1817,7 @@ export default function App() {
       if (!nextName) return;
       const updated = projects.map((p) => (p.id === project.id ? { ...p, name: nextName, updatedAt: new Date().toISOString() } : p));
       setProjects(updated);
-      localStorage.setItem(PROJECTS_KEY, JSON.stringify(updated));
+      safeSetLocalStorage(PROJECTS_KEY, JSON.stringify(updated));
       if (currentProject?.id === project.id) {
         setCurrentProject({ ...project, name: nextName });
       }
@@ -1625,8 +1831,12 @@ export default function App() {
       if (!confirmDelete) return;
       const next = projects.filter((p) => p.id !== project.id);
       setProjects(next);
-      localStorage.setItem(PROJECTS_KEY, JSON.stringify(next));
-      localStorage.removeItem(`${STORAGE_KEY}-${project.id}`);
+      safeSetLocalStorage(PROJECTS_KEY, JSON.stringify(next));
+      try {
+        localStorage.removeItem(`${STORAGE_KEY}-${project.id}`);
+      } catch (error) {
+        console.warn('Failed to remove saved canvas', error);
+      }
       if (currentProject?.id === project.id) {
         setCurrentProject(null);
         setMode('home');
@@ -1679,23 +1889,27 @@ export default function App() {
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    localStorage.setItem(PREF_KEY, JSON.stringify(preferences));
+    safeSetLocalStorage(PREF_KEY, JSON.stringify(preferences));
   }, [preferences]);
 
   useEffect(() => {
-    localStorage.setItem(ASSETS_KEY, JSON.stringify(assets));
+    safeSetLocalStorage(ASSETS_KEY, JSON.stringify(assets));
   }, [assets]);
 
   useEffect(() => {
     if (!currentProject) return;
     const payload = JSON.stringify({ data, view });
-    localStorage.setItem(storageKey, payload);
+    const saved = safeSetLocalStorage(storageKey, payload);
+    if (!saved) {
+      showToast('Could not save locally. Remove large assets or export the canvas.');
+      return;
+    }
     setProjects((prev) => {
       const updated = prev.map((p) => (p.id === currentProject.id ? { ...p, updatedAt: new Date().toISOString() } : p));
-      localStorage.setItem(PROJECTS_KEY, JSON.stringify(updated));
+      safeSetLocalStorage(PROJECTS_KEY, JSON.stringify(updated));
       return updated;
     });
-  }, [currentProject, data, storageKey, view]);
+  }, [currentProject, data, showToast, storageKey, view]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1719,6 +1933,10 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'enter') {
         e.preventDefault();
         runSelected();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        duplicateSelectedBlock();
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         const first = Array.from(selectedIds)[0];
@@ -1746,7 +1964,7 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [addBlock, deleteBlock, runSelected, selectedIds]);
+  }, [addBlock, deleteBlock, duplicateSelectedBlock, runSelected, selectedIds]);
 
   useEffect(() => {
     const onUp = () => handleMouseUp();
@@ -1780,6 +1998,34 @@ export default function App() {
       <div id="canvas-bg" className="absolute inset-0 w-full h-full">
         {preferences.showGrid && <GridBackground zoom={view.zoom} offset={view} />}
       </div>
+
+      {data.blocks.length === 0 && (
+        <div className="fixed inset-0 z-10 flex items-center justify-center pointer-events-none px-6">
+          <div className="pointer-events-auto w-full max-w-md rounded-2xl border border-white/10 bg-[#0a0c10]/90 p-5 shadow-[0_22px_65px_rgba(0,0,0,0.55)] backdrop-blur-md">
+            <div className="text-xs uppercase tracking-[0.18em] text-[#7b7f8d]">Empty canvas</div>
+            <h2 className="mt-1 text-xl font-semibold text-white">Start with a prompt or image block.</h2>
+            <p className="mt-2 text-sm text-[#b2b5c3] leading-relaxed">
+              Add blocks from the left rail, then drag from an output dot to another block’s input dot to build a flow.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                className="rounded-xl bg-white px-4 py-2 text-sm font-medium text-black transition hover:scale-[1.02]"
+                onClick={() => addBlock('TEXT')}
+              >
+                <Plus size={16} className="mr-2 inline" />
+                Text block
+              </button>
+              <button
+                className="rounded-xl border border-white/10 bg-[#111318] px-4 py-2 text-sm text-white transition hover:bg-[#181b22]"
+                onClick={() => addBlock('IMAGE')}
+              >
+                <ImageIcon size={16} className="mr-2 inline" />
+                Image block
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div
         style={{
@@ -1835,9 +2081,24 @@ export default function App() {
         showGrid={preferences.showGrid}
         onResetView={resetView}
         onRunSelected={runSelected}
+        onRunOutputs={runOutputBlocks}
+        onDuplicateSelected={duplicateSelectedBlock}
+        onExport={exportCanvas}
+        onImport={() => importInputRef.current?.click()}
         onShare={onShare}
         onHome={handleHome}
         projectName={currentProject?.name ?? 'Canvas'}
+      />
+      <input
+        ref={importInputRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) importCanvasFile(file);
+          event.target.value = '';
+        }}
       />
       <Sidebar
         onNavigateAssets={() => {
@@ -1927,4 +2188,3 @@ export default function App() {
     </div>
   );
 }
-

@@ -17,9 +17,9 @@ dotenv.config({ path: path.join(repoRoot, '.env') });
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 3001;
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
+const openai = process.env.OPENAI_API_KEY
+    ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    : null;
 const GOOGLE_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
 
 app.use(cors());
@@ -30,8 +30,36 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.post('/api/generate-text', async (req, res) => {
     try {
         const { prompt, modelId = 'gpt-5-nano', reasoning } = req.body;
-        if (!prompt || !process.env.OPENAI_API_KEY) {
-            return res.status(400).json({ error: 'Missing prompt or API key' });
+        if (!prompt) {
+            return res.status(400).json({ error: 'Missing prompt' });
+        }
+
+        const wantsGoogle = modelId.includes('gemini');
+        if (wantsGoogle && GOOGLE_API_KEY) {
+            const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${GOOGLE_API_KEY}`;
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                }),
+            });
+            if (!response.ok) {
+                const err = await response.text();
+                throw new Error(err);
+            }
+            const payload = await response.json();
+            const text = payload?.candidates?.[0]?.content?.parts
+                ?.map((part: any) => part.text)
+                .filter(Boolean)
+                .join('\n')
+                .trim();
+            if (!text) throw new Error('No text returned from Gemini');
+            return res.json({ text });
+        }
+
+        if (!process.env.OPENAI_API_KEY) {
+            return res.status(400).json({ error: 'Missing API key' });
         }
         const effort =
             typeof reasoning === 'string'
@@ -40,7 +68,7 @@ app.post('/api/generate-text', async (req, res) => {
                     ? reasoning.effort
                     : 'high';
         const reasoningPayload = effort ? { effort } : undefined;
-        const completion = await openai.responses.create({
+        const completion = await openai!.responses.create({
             model: modelId,
             input: [{ role: 'user', content: prompt }],
             reasoning: reasoningPayload,
@@ -88,12 +116,13 @@ app.post('/api/generate-image', async (req, res) => {
         }
 
         // Default to OpenAI image generation
-        const result = await openai.images.generate({
+        const result = await openai!.images.generate({
             model: 'gpt-image-1',
             prompt,
             size,
         });
-        const url = result.data?.[0]?.url || '';
+        const image = result.data?.[0];
+        const url = image?.url || (image?.b64_json ? `data:image/png;base64,${image.b64_json}` : '');
         if (!url) {
             throw new Error('No image URL returned from provider');
         }
