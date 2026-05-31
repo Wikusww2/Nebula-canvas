@@ -20,6 +20,11 @@ import {
   Download,
   Upload,
   Wand2,
+  Search,
+  ArrowRight,
+  FolderOpen,
+  Sparkles,
+  Clock3,
 } from 'lucide-react';
 import { MODEL_LIBRARY, ModelConfig } from '../../shared/src/models';
 
@@ -84,6 +89,7 @@ const STORAGE_KEY = 'nebula-canvas-state-v1';
 const PREF_KEY = 'nebula-preferences-v1';
 const PROJECTS_KEY = 'nebula-projects-v1';
 const ASSETS_KEY = 'nebula-assets-v1';
+const OPENAI_API_KEY_STORAGE_KEY = 'nebula-openai-api-key-v1';
 const GLOBAL_SYSTEM_PROMPT = `
 You are Nebula Canvas, a deterministic, safety-first orchestration layer. Always:
 - Respect user intent while keeping outputs concise and relevant to the active node (text or image).
@@ -116,6 +122,75 @@ const MODEL_LOOKUP: Record<string, ModelConfig> = MODEL_LIBRARY.reduce((acc, mod
 
 const TEXT_MODELS = MODEL_LIBRARY.filter((m) => m.type === 'text');
 const IMAGE_MODELS = MODEL_LIBRARY.filter((m) => m.type === 'image');
+const DEFAULT_TEXT_MODEL_ID = TEXT_MODELS[0]?.id ?? 'gpt-5.5';
+const DEFAULT_IMAGE_MODEL_ID = IMAGE_MODELS[0]?.id ?? 'gpt-image-2';
+
+const demoImageUrl = (title: string, subtitle: string, accent: string) =>
+  `data:image/svg+xml,${encodeURIComponent(`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 800">
+      <defs>
+        <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+          <stop offset="0" stop-color="#06070a"/>
+          <stop offset="0.52" stop-color="#111827"/>
+          <stop offset="1" stop-color="#020617"/>
+        </linearGradient>
+        <radialGradient id="glow" cx="50%" cy="38%" r="44%">
+          <stop offset="0" stop-color="${accent}" stop-opacity="0.88"/>
+          <stop offset="0.45" stop-color="${accent}" stop-opacity="0.28"/>
+          <stop offset="1" stop-color="${accent}" stop-opacity="0"/>
+        </radialGradient>
+      </defs>
+      <rect width="640" height="800" fill="url(#bg)"/>
+      <circle cx="320" cy="305" r="245" fill="url(#glow)"/>
+      <g fill="none" stroke="${accent}" stroke-width="9" stroke-linecap="round" opacity="0.9">
+        <path d="M320 220 C250 120 138 170 196 280 C92 324 137 462 262 426 C273 553 445 553 456 426 C581 462 626 324 444 280 C502 170 390 120 320 220Z"/>
+        <path d="M320 230 C292 305 292 390 320 462 C348 390 348 305 320 230Z"/>
+        <path d="M210 286 C278 310 360 318 430 286"/>
+        <path d="M255 427 C305 383 335 383 385 427"/>
+      </g>
+      <text x="320" y="650" fill="#f8fafc" font-family="Inter, Arial, sans-serif" font-size="38" font-weight="700" text-anchor="middle">${title}</text>
+      <text x="320" y="692" fill="#94a3b8" font-family="Inter, Arial, sans-serif" font-size="20" text-anchor="middle">${subtitle}</text>
+    </svg>
+  `)}`;
+
+const DEMO_GLASS_FLOWER_URL = demoImageUrl('Glass Flower', 'Local demo reference', '#7dd3fc');
+const DEMO_FLOWERS_BLOOMING_URL = demoImageUrl('Flowers Blooming', 'Local generated preview', '#fbbf24');
+const normalizeModelId = (type: BlockType, modelId?: unknown) => {
+  const models = type === 'TEXT' ? TEXT_MODELS : IMAGE_MODELS;
+  const candidate = typeof modelId === 'string' ? modelId : '';
+  return models.some((model) => model.id === candidate) ? candidate : type === 'TEXT' ? DEFAULT_TEXT_MODEL_ID : DEFAULT_IMAGE_MODEL_ID;
+};
+
+const normalizeImageUrl = (url?: string) => {
+  if (!url) return '';
+  if (url.includes('photo-1695503460699-299f02275466')) return DEMO_GLASS_FLOWER_URL;
+  if (url.includes('photo-1663486333792-628b75c88998')) return DEMO_FLOWERS_BLOOMING_URL;
+  return url;
+};
+
+const DEFAULT_IMAGE_PROMPTS = new Set(['Ready to generate...', 'Drop a reference image here.']);
+
+const blockLabel = (block: Block) => block.title || (block.type === 'TEXT' ? 'Text node' : 'Image node');
+
+const textForFlow = (block: Block) => {
+  const prompt = block.content.text?.trim();
+  const generated = block.content.generated?.trim();
+  if (prompt && generated && prompt !== generated) {
+    return `${blockLabel(block)} prompt:\n${prompt}\n\n${blockLabel(block)} result:\n${generated}`;
+  }
+  return generated || prompt || '';
+};
+
+const imageForFlow = (block: Block) => {
+  const caption = block.content.caption?.trim();
+  const safeCaption = caption && !DEFAULT_IMAGE_PROMPTS.has(caption) ? caption : '';
+  if (block.content.url?.startsWith('http')) {
+    return [`${blockLabel(block)} image${safeCaption ? `: ${safeCaption}` : ''}`, block.content.url].filter(Boolean).join('\n');
+  }
+  return safeCaption ? `${blockLabel(block)} image: ${safeCaption}` : '';
+};
+
+const blockContextForFlow = (block: Block) => (block.type === 'TEXT' ? textForFlow(block) : imageForFlow(block));
 
 const INITIAL_DATA: CanvasData = {
   blocks: [
@@ -129,12 +204,12 @@ const INITIAL_DATA: CanvasData = {
       width: 320,
       systemPrompt: '',
       content: {
-        url: 'https://images.unsplash.com/photo-1695503460699-299f02275466?q=80&w=3132&auto=format&fit=crop',
+        url: DEMO_GLASS_FLOWER_URL,
         caption: 'A radiant, translucent flower glows softly at its centre...',
       },
       status: 'idle',
       isStale: false,
-      modelId: 'gemini-3-pro-image-preview',
+      modelId: DEFAULT_IMAGE_MODEL_ID,
     },
     {
       id: 'b2',
@@ -150,7 +225,7 @@ const INITIAL_DATA: CanvasData = {
       },
       status: 'idle',
       isStale: false,
-      modelId: 'gpt-5-nano',
+      modelId: DEFAULT_TEXT_MODEL_ID,
     },
     {
       id: 'b3',
@@ -162,12 +237,12 @@ const INITIAL_DATA: CanvasData = {
       width: 320,
       systemPrompt: '',
       content: {
-        url: 'https://images.unsplash.com/photo-1663486333792-628b75c88998?q=80&w=2160&auto=format&fit=crop',
+        url: DEMO_FLOWERS_BLOOMING_URL,
         caption: 'Variations generated based on the extracted palette.',
       },
       status: 'idle',
       isStale: false,
-      modelId: 'gemini-3-pro-image-preview',
+      modelId: DEFAULT_IMAGE_MODEL_ID,
     },
   ],
   connections: [
@@ -185,7 +260,7 @@ const defaultPreferences: Preferences = {
 };
 
 const defaultView = { x: 0, y: 0, zoom: 1 };
-const API_BASE = (import.meta as any).env?.VITE_API_BASE || 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001';
 const DEMO_CANVAS = INITIAL_DATA;
 const CLEAN_CANVAS: CanvasData = { blocks: [], connections: [] };
 const MENU_WIDTH = 320;
@@ -194,7 +269,11 @@ const MENU_HEIGHT = 470;
 const createId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 const cloneCanvasData = (canvas: CanvasData): CanvasData => ({
-  blocks: canvas.blocks.map((block) => ({ ...block, content: { ...block.content } })),
+  blocks: canvas.blocks.map((block) => ({
+    ...block,
+    modelId: normalizeModelId(block.type, block.modelId),
+    content: { ...block.content, url: block.type === 'IMAGE' ? normalizeImageUrl(block.content.url) : block.content.url },
+  })),
   connections: canvas.connections.map((connection) => ({ ...connection })),
 });
 
@@ -243,10 +322,15 @@ const normalizeImportedCanvas = (value: unknown): CanvasData | null => {
         x: Number.isFinite(block.x) ? block.x : 0,
         y: Number.isFinite(block.y) ? block.y : 0,
         width: Number.isFinite(block.width) ? block.width : 320,
-        content: block.content && typeof block.content === 'object' ? block.content : block.type === 'TEXT' ? { text: '' } : { url: '', caption: '' },
+        content:
+          block.content && typeof block.content === 'object'
+            ? { ...block.content, url: block.type === 'IMAGE' ? normalizeImageUrl(block.content.url) : block.content.url }
+            : block.type === 'TEXT'
+              ? { text: '' }
+              : { url: '', caption: '' },
         status: 'idle' as BlockStatus,
         isStale: Boolean(block.isStale),
-        modelId: typeof block.modelId === 'string' ? block.modelId : block.type === 'TEXT' ? 'gpt-5-nano' : 'gemini-3-pro-image-preview',
+        modelId: normalizeModelId(block.type, block.modelId),
       };
     });
 
@@ -363,6 +447,7 @@ interface BlockProps {
   onRun: (id: string) => void;
   onDelete: (id: string) => void;
   onEditText: (id: string, value: string) => void;
+  onEditCaption: (id: string, value: string) => void;
   onRename: (id: string) => void;
   onStartConnection: (id: string) => void;
   onCompleteConnection: (id: string) => void;
@@ -382,6 +467,7 @@ const BlockCard: React.FC<BlockProps> = ({
   onRun,
   onDelete,
   onEditText,
+  onEditCaption,
   onRename,
   onStartConnection,
   onCompleteConnection,
@@ -399,17 +485,17 @@ const BlockCard: React.FC<BlockProps> = ({
   const modelLabel = MODEL_LOOKUP[block.modelId]?.displayName ?? block.modelId;
   const roleColor =
     block.role === 'output'
-      ? 'bg-[#3fa6ff]/20 text-[#a7d8ff] border-[#3fa6ff]/40'
+      ? 'bg-[#7dd3fc]/15 text-[#bae6fd] border-[#7dd3fc]/30'
       : block.role === 'input'
-        ? 'bg-[#7b7f8d]/20 text-[#d3d5df] border-[#7b7f8d]/40'
-        : 'bg-white/5 text-[#7b7f8d] border-white/5';
+        ? 'bg-[#99f6e4]/10 text-[#ccfbf1] border-[#99f6e4]/25'
+        : 'bg-white/[0.04] text-[#8f98a8] border-white/[0.06]';
   const roleLabel = block.role === 'output' ? 'Output' : block.role === 'input' ? 'Input' : '';
   const roleFrame =
     block.role === 'output'
-      ? 'bg-gradient-to-b from-[#0b1628] to-[#0c1120] border-[#3fa6ff]/40 ring-2 ring-[#3fa6ff]/25'
+      ? 'bg-[linear-gradient(180deg,rgba(12,25,39,0.96),rgba(9,14,23,0.98))] border-[#7dd3fc]/30 ring-1 ring-[#7dd3fc]/20'
       : block.role === 'input'
-        ? 'bg-gradient-to-b from-[#0e0f14] to-[#0b0d12] border-white/15'
-        : 'bg-[#111318]';
+        ? 'bg-[linear-gradient(180deg,rgba(12,22,20,0.95),rgba(9,13,16,0.98))] border-[#99f6e4]/20'
+        : 'bg-[linear-gradient(180deg,rgba(17,20,27,0.96),rgba(10,13,18,0.98))] border-white/[0.08]';
 
   return (
     <div
@@ -425,7 +511,7 @@ const BlockCard: React.FC<BlockProps> = ({
       <div
         className={`absolute -inset-[1px] rounded-[24px] pointer-events-none transition-all duration-300 ${
           isSelected && preferences.showGlow
-            ? 'opacity-100 shadow-[0_0_40px_rgba(117,187,255,0.35)] border border-[rgba(117,187,255,0.65)]'
+            ? 'opacity-100 shadow-[0_24px_80px_rgba(5,12,18,0.72)] border border-[rgba(125,211,252,0.56)]'
             : 'opacity-0 border border-transparent'
         }`}
       />
@@ -433,9 +519,9 @@ const BlockCard: React.FC<BlockProps> = ({
         <div className="absolute -inset-[4px] rounded-[26px] pointer-events-none node-pulse-ring" />
       )}
       <div
-        className={`relative flex flex-col overflow-hidden rounded-[24px]
-        border shadow-[0_18px_40px_rgba(0,0,0,0.55)]
-        transition-colors duration-200 ${isSelected ? 'border-white/10' : 'hover:border-white/10'} overflow-visible ${roleFrame}`}
+        className={`relative flex flex-col overflow-hidden rounded-[22px]
+        border shadow-[0_22px_70px_rgba(2,6,12,0.62),inset_0_1px_0_rgba(255,255,255,0.06)]
+        transition-colors duration-200 ${isSelected ? 'border-[#7dd3fc]/45' : 'hover:border-white/15'} overflow-visible ${roleFrame}`}
       >
         <div className="flex items-center justify-between px-4 pt-4 pb-2 select-none">
           <div className="flex items-center gap-2">
@@ -458,39 +544,48 @@ const BlockCard: React.FC<BlockProps> = ({
               </span>
             )}
           </div>
-          <div className="relative">
-            <button
-              className="text-[10px] uppercase font-medium tracking-wider text-[#7b7f8d] px-2 py-0.5 rounded-full bg-white/5 border border-white/5 hover:border-white/20"
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleModelMenu(block.id);
-              }}
-            >
-              {modelLabel}
-            </button>
-            {modelMenuOpen && (
-              <div
-                className="absolute right-0 mt-2 w-52 max-h-64 overflow-y-auto bg-[#0f1116] border border-white/10 rounded-xl shadow-2xl z-20"
-                onWheel={(e) => e.stopPropagation()}
+          {isInput ? (
+            <div className="text-[10px] uppercase font-medium tracking-wider text-[#8f98a8] px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.06]">
+              Source
+            </div>
+          ) : (
+            <div className="relative">
+              <button
+                className="text-[10px] uppercase font-medium tracking-wider text-[#8f98a8] px-2 py-0.5 rounded-full bg-white/[0.04] border border-white/[0.06] hover:border-[#7dd3fc]/35 hover:text-white"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleModelMenu(block.id);
+                }}
               >
-                {availableModels.map((model) => (
-                  <button
-                    key={model.id}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSelectModel(block.id, model.id);
-                    }}
-                    className={`w-full text-left px-3 py-2 text-sm transition ${
-                      model.id === block.modelId ? 'bg-white/10 text-white' : 'text-[#b2b5c3] hover:bg-white/5'
-                    }`}
-                  >
-                    <div className="font-medium text-white">{model.displayName}</div>
-                    <div className="text-[11px] text-[#7b7f8d]">{model.id}</div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+                {modelLabel}
+              </button>
+              {modelMenuOpen && (
+                <div
+                  className="absolute right-0 mt-2 w-52 max-h-64 overflow-y-auto bg-[#0b0e13] border border-white/10 rounded-xl shadow-2xl z-20"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onWheel={(e) => e.stopPropagation()}
+                >
+                  {availableModels.map((model) => (
+                    <button
+                      key={model.id}
+                      onMouseDown={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSelectModel(block.id, model.id);
+                      }}
+                      className={`w-full text-left px-3 py-2 text-sm transition ${
+                        model.id === block.modelId ? 'bg-[#7dd3fc]/12 text-white' : 'text-[#b2b5c3] hover:bg-white/[0.06]'
+                      }`}
+                    >
+                      <div className="font-medium text-white">{model.displayName}</div>
+                      <div className="text-[11px] text-[#7b7f8d]">{model.id}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="p-3">
@@ -526,7 +621,19 @@ const BlockCard: React.FC<BlockProps> = ({
             </div>
           ) : (
             <>
-              {isOutput ? (
+              {isInput ? (
+                <div className="rounded-[16px] border border-[#99f6e4]/15 bg-[#07120f]/70 p-4 min-h-[132px]">
+                  <div className="mb-2 text-[11px] uppercase tracking-wide text-[#99f6e4]">Input source</div>
+                  <textarea
+                    className="w-full min-h-[98px] bg-transparent border-none resize-none text-[13px] font-mono text-[#dce7f5] leading-relaxed focus:outline-none"
+                    value={block.content.text === 'Enter prompt...' ? '' : block.content.text || ''}
+                    placeholder="Type the source context..."
+                    onChange={(e) => onEditText(block.id, e.target.value)}
+                    spellCheck={false}
+                    onMouseDown={(ev) => ev.stopPropagation()}
+                  />
+                </div>
+              ) : isOutput ? (
                 <div className="bg-gradient-to-b from-[#0b1628] via-[#0e1d33] to-[#0c1120] rounded-[18px] p-4 min-h-[160px] border border-[#3fa6ff]/30 shadow-[0_10px_30px_rgba(0,0,0,0.45)]">
                   <div className="flex items-center justify-between mb-3">
                     <div className="text-[11px] uppercase tracking-wide text-[#a7d8ff]">Final Output</div>
@@ -542,11 +649,16 @@ const BlockCard: React.FC<BlockProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="bg-white/[0.02] rounded-[16px] p-4 min-h-[120px] border border-white/5 hover:bg-white/[0.04] transition-colors group/text space-y-3">
+                <div className="bg-white/[0.025] rounded-[16px] p-4 min-h-[132px] border border-white/[0.06] hover:bg-white/[0.045] transition-colors group/text space-y-3">
                   <div>
-                    <div className="text-[11px] uppercase tracking-wide text-[#7b7f8d] mb-1">Prompt</div>
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="text-[11px] uppercase tracking-wide text-[#7b7f8d]">Prompt</div>
+                      {block.content.generated && (
+                        <span className="text-[10px] text-[#7dd3fc]">Routed</span>
+                      )}
+                    </div>
                     <textarea
-                      className="w-full h-full bg-transparent border-none resize-none text-[13px] font-mono text-[#b2b5c3] leading-relaxed focus:outline-none"
+                      className="w-full min-h-[96px] bg-transparent border-none resize-none text-[13px] font-mono text-[#b2b5c3] leading-relaxed focus:outline-none"
                       value={block.content.text === 'Enter prompt...' ? '' : block.content.text || ''}
                       placeholder="Enter prompt..."
                       onChange={(e) => onEditText(block.id, e.target.value)}
@@ -561,28 +673,41 @@ const BlockCard: React.FC<BlockProps> = ({
 
           <div className="mt-3 px-1 min-h-[20px] flex items-center justify-between gap-3">
             {isImage && (
-              <p className="text-[12px] text-[#7b7f8d] leading-tight pr-3 overflow-hidden text-ellipsis">
-                {block.content.caption || 'Ready to generate...'}
-              </p>
-            )}
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onRun(block.id);
-              }}
-              disabled={block.status === 'running'}
-              className={`w-9 h-9 ml-auto rounded-full flex items-center justify-center shadow-lg transition-all ${
-                block.status === 'running'
-                  ? 'bg-[#181b22] border border-white/10 cursor-wait'
-                  : 'bg-[#f5f5f7] hover:bg-white text-black hover:scale-105'
-              }`}
-            >
-              {block.status === 'running' ? (
-                <div className="w-4 h-4 border-2 border-t-transparent border-[#7b7f8d] rounded-full animate-spin" />
+              isOutput ? (
+                <p className="text-[12px] text-[#7b7f8d] leading-tight pr-3 overflow-hidden text-ellipsis">
+                  {block.content.caption || 'Ready to generate...'}
+                </p>
               ) : (
-                <Play size={14} fill="currentColor" className="ml-0.5" />
-              )}
-            </button>
+                <textarea
+                  className="min-h-[44px] flex-1 resize-none rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2 text-[12px] leading-snug text-[#b2b5c3] focus:border-white/20 focus:outline-none"
+                  value={block.content.caption || ''}
+                  placeholder={isInput ? 'Describe this reference image...' : 'Describe the image to generate...'}
+                  onChange={(e) => onEditCaption(block.id, e.target.value)}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  spellCheck={false}
+                />
+              )
+            )}
+            {!isInput && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRun(block.id);
+                }}
+                disabled={block.status === 'running'}
+                className={`w-9 h-9 ml-auto rounded-full flex items-center justify-center shadow-lg transition-all ${
+                  block.status === 'running'
+                    ? 'bg-[#181b22] border border-white/10 cursor-wait'
+                    : 'bg-[#f5f5f7] hover:bg-white text-black hover:scale-105'
+                }`}
+              >
+                {block.status === 'running' ? (
+                  <div className="w-4 h-4 border-2 border-t-transparent border-[#7b7f8d] rounded-full animate-spin" />
+                ) : (
+                  <Play size={14} fill="currentColor" className="ml-0.5" />
+                )}
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -595,21 +720,23 @@ const BlockCard: React.FC<BlockProps> = ({
         </div>
       )}
 
+      {!isInput && (
+        <div
+          className="absolute top-[60px] -left-1.5 w-3 h-3 rounded-full bg-[#111318] border-2 border-[#7b7f8d] hover:border-[#7dd3fc] hover:scale-125 transition-transform cursor-crosshair z-10"
+          onMouseDown={(e) => {
+            e.stopPropagation();
+            onCompleteConnection(block.id);
+          }}
+          title="Input"
+        />
+      )}
       <div
-        className="absolute top-[60px] -left-1.5 w-3 h-3 rounded-full bg-[#111318] border-2 border-[#7b7f8d] hover:border-[#3fa6ff] hover:scale-125 transition-transform cursor-crosshair z-10"
-        onMouseDown={(e) => {
-          e.stopPropagation();
-          onCompleteConnection(block.id);
-        }}
-        title="Input"
-      />
-      <div
-        className="absolute top-[60px] -right-1.5 w-3 h-3 rounded-full bg-[#111318] border-2 border-[#f5f5f7] hover:border-[#3fa6ff] hover:scale-125 transition-transform cursor-crosshair z-10"
+        className="absolute top-[60px] -right-1.5 w-3 h-3 rounded-full bg-[#111318] border-2 border-[#f5f5f7] hover:border-[#7dd3fc] hover:scale-125 transition-transform cursor-crosshair z-10"
         onMouseDown={(e) => {
           e.stopPropagation();
           onStartConnection(block.id);
         }}
-        style={{ boxShadow: isConnecting ? '0 0 0 4px rgba(63,166,255,0.3)' : 'none' }}
+        style={{ boxShadow: isConnecting ? '0 0 0 4px rgba(125,211,252,0.25)' : 'none' }}
         title="Output"
       />
     </div>
@@ -643,8 +770,18 @@ const SettingsPanel: React.FC<{
   onClose: () => void;
   preferences: Preferences;
   onUpdate: (next: Preferences) => void;
-}> = ({ open, onClose, preferences, onUpdate }) => {
+  openAiApiKey: string;
+  onSaveOpenAiApiKey: (value: string) => void;
+  onClearOpenAiApiKey: () => void;
+}> = ({ open, onClose, preferences, onUpdate, openAiApiKey, onSaveOpenAiApiKey, onClearOpenAiApiKey }) => {
+  const [draftKey, setDraftKey] = useState(openAiApiKey);
+
+  useEffect(() => {
+    if (open) setDraftKey(openAiApiKey);
+  }, [open, openAiApiKey]);
+
   if (!open) return null;
+  const hasSavedKey = Boolean(openAiApiKey);
   return (
     <>
       <div className="fixed inset-0 bg-black/60 z-[90]" onMouseDown={onClose} />
@@ -655,6 +792,49 @@ const SettingsPanel: React.FC<{
             <p className="text-sm text-[#7b7f8d]">Personalize your canvas behaviour.</p>
           </div>
           <IconButton icon={X} onClick={onClose} title="Close settings" />
+        </div>
+
+        <div className="mb-4 rounded-xl border border-white/10 bg-[#0a0c10] p-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm text-[#f8f8fb]">OpenAI API key</div>
+              <div className="text-[12px] text-[#7b7f8d]">
+                Saved only in this browser and sent to the local backend when you run a block.
+              </div>
+            </div>
+            <span className={`shrink-0 text-[10px] px-2 py-1 rounded-full border ${hasSavedKey ? 'bg-green-500/10 text-green-200 border-green-400/30' : 'bg-white/5 text-[#7b7f8d] border-white/10'}`}>
+              {hasSavedKey ? 'Saved' : 'Empty'}
+            </span>
+          </div>
+          <input
+            type="password"
+            value={draftKey}
+            onChange={(e) => setDraftKey(e.target.value)}
+            onMouseDown={(e) => e.stopPropagation()}
+            placeholder="sk-..."
+            autoComplete="off"
+            spellCheck={false}
+            className="mt-3 w-full bg-[#111318] border border-white/10 text-sm px-3 py-2 rounded-lg text-white focus:outline-none focus:border-[#3fa6ff]/60"
+          />
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              className="px-3 py-2 rounded-lg bg-white text-black text-sm font-medium hover:scale-[1.02] transition disabled:opacity-40 disabled:hover:scale-100"
+              disabled={!draftKey.trim()}
+              onClick={() => onSaveOpenAiApiKey(draftKey)}
+            >
+              Save key
+            </button>
+            <button
+              className="px-3 py-2 rounded-lg bg-[#111318] border border-white/10 text-sm text-white hover:bg-[#181b22] transition disabled:opacity-40"
+              disabled={!hasSavedKey && !draftKey}
+              onClick={() => {
+                setDraftKey('');
+                onClearOpenAiApiKey();
+              }}
+            >
+              Clear
+            </button>
+          </div>
         </div>
 
         <div className="space-y-2">
@@ -696,6 +876,8 @@ const SettingsPanel: React.FC<{
 
 const TopBar: React.FC<{
   onFit: () => void;
+  onAutoLayout: () => void;
+  onAddOutput: () => void;
   onToggleGrid: () => void;
   showGrid: boolean;
   onResetView: () => void;
@@ -707,7 +889,7 @@ const TopBar: React.FC<{
   onShare: () => void;
   onHome: () => void;
   projectName: string;
-}> = ({ onFit, onToggleGrid, showGrid, onResetView, onRunSelected, onRunOutputs, onDuplicateSelected, onExport, onImport, onShare, onHome, projectName }) => (
+}> = ({ onFit, onAutoLayout, onAddOutput, onToggleGrid, showGrid, onResetView, onRunSelected, onRunOutputs, onDuplicateSelected, onExport, onImport, onShare, onHome, projectName }) => (
   <div className="fixed top-0 left-0 w-full h-14 z-50 flex items-center justify-between px-6 pointer-events-none">
     <div className="absolute inset-0 bg-gradient-to-b from-[#050607] to-transparent opacity-90" />
     <div className="pointer-events-auto relative z-10 flex items-center gap-4">
@@ -724,16 +906,18 @@ const TopBar: React.FC<{
       <div>
         <h1 className="text-sm font-medium text-[#f8f8fb]">{projectName}</h1>
         <div className="text-[10px] text-[#7b7f8d] flex items-center gap-1">
-          Last edited moments ago <div className="w-1 h-1 rounded-full bg-green-500" />
+          Saved locally <div className="w-1 h-1 rounded-full bg-green-500" />
         </div>
       </div>
     </div>
 
     <div className="pointer-events-auto relative z-10 flex items-center gap-2 bg-[#111318]/80 backdrop-blur-md p-1 rounded-full border border-white/10 shadow-xl">
       <IconButton icon={Play} title="Run selected block (Ctrl/Cmd + Enter)" onClick={onRunSelected} />
-      <IconButton icon={Wand2} title="Run all output blocks" onClick={onRunOutputs} />
+      <IconButton icon={Wand2} title="Run full flow" onClick={onRunOutputs} />
+      <IconButton icon={Box} title="Add output from selected" onClick={onAddOutput} />
       <IconButton icon={Copy} title="Duplicate selected block (Ctrl/Cmd + D)" onClick={onDuplicateSelected} />
       <IconButton icon={Maximize} title="Fit to content" onClick={onFit} />
+      <IconButton icon={Layers} title="Auto arrange flow" onClick={onAutoLayout} />
       <IconButton icon={Grid} title="Toggle grid" active={showGrid} onClick={onToggleGrid} />
       <div className="w-[1px] h-4 bg-white/10 mx-1" />
       <IconButton icon={RotateCcw} title="Reset view" onClick={onResetView} />
@@ -751,23 +935,27 @@ const TopBar: React.FC<{
       >
         <Share2 size={12} /> Share
       </button>
-      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 border border-white/20" />
+      <div className="w-8 h-8 rounded-xl bg-[#101720] border border-[#7dd3fc]/20 text-[11px] font-semibold text-[#bae6fd] flex items-center justify-center">N</div>
     </div>
   </div>
 );
 
 const Sidebar: React.FC<{
   onNavigateAssets: () => void;
-  onAdd: (type: BlockType) => void;
+  onAdd: (type: BlockType, role?: Block['role']) => void;
   onOpenSettings: () => void;
   mode: 'home' | 'canvas';
 }> = ({ onNavigateAssets, onAdd, onOpenSettings, mode }) => (
   <div className="fixed left-6 top-1/2 -translate-y-1/2 z-50 flex flex-col gap-4 pointer-events-none">
-    <div className="pointer-events-auto bg-[#0a0c10]/90 backdrop-blur-xl border border-white/10 rounded-full py-3 px-2 shadow-[0_18px_40px_rgba(0,0,0,0.55)] flex flex-col gap-2 w-14 items-center">
+    <div className="pointer-events-auto bg-[#0a0c10]/92 backdrop-blur-xl border border-white/10 rounded-[24px] py-3 px-2 shadow-[0_18px_54px_rgba(2,6,12,0.65),inset_0_1px_0_rgba(255,255,255,0.05)] flex flex-col gap-2 w-14 items-center">
       <IconButton icon={Cloud} title="Assets" active={mode === 'home'} onClick={onNavigateAssets} />
       <IconButton icon={Layers} active={mode === 'canvas'} title="Canvas" />
-      <IconButton icon={Box} onClick={() => onAdd('TEXT')} title="Add text block (T)" />
+      <div className="w-6 h-[1px] bg-white/10 my-1" />
+      <IconButton icon={Type} onClick={() => onAdd('TEXT', 'input')} title="Add text input" />
+      <IconButton icon={Box} onClick={() => onAdd('TEXT')} title="Add prompt block (T)" />
       <IconButton icon={ImageIcon} onClick={() => onAdd('IMAGE')} title="Add image block (I)" />
+      <IconButton icon={Type} onClick={() => onAdd('TEXT', 'output')} title="Add text output" />
+      <IconButton icon={ImageIcon} onClick={() => onAdd('IMAGE', 'output')} title="Add image output" />
       <div className="w-6 h-[1px] bg-white/10 my-1" />
       <IconButton icon={Settings} onClick={onOpenSettings} title="Settings" />
     </div>
@@ -812,7 +1000,7 @@ const ContextMenu: React.FC<{
         </div>
         <div className="flex flex-col">
           <span className="text-sm font-medium text-[#f8f8fb]">Image</span>
-          <span className="text-[11px] text-[#7b7f8d]">Flux & Stable Diff</span>
+          <span className="text-[11px] text-[#7b7f8d]">OpenAI image generation</span>
         </div>
         <span className="ml-auto text-[10px] text-[#505460] font-mono border border-white/5 px-1.5 py-0.5 rounded">I</span>
       </button>
@@ -900,121 +1088,220 @@ const HomeScreen: React.FC<{
       return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
     });
 
+  const latestProject = projects
+    .slice()
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+  const latestLabel = latestProject ? new Date(latestProject.updatedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'None';
+  const resultLabel = query ? `${filtered.length} matched` : `${projects.length} saved`;
+
   return (
-    <div className="w-full min-h-screen bg-[#050607] text-white flex flex-col items-center px-6 py-10 overflow-y-auto">
-      <div className="max-w-6xl w-full flex flex-col gap-6">
-        <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-gradient-to-r from-[#0a0c12] via-[#0c1120] to-[#0a0c12] p-6 shadow-[0_30px_80px_rgba(0,0,0,0.45)]">
-          <div className="absolute -left-10 -top-10 h-32 w-32 rounded-full bg-[#3fa6ff33] blur-3xl" />
-          <div className="absolute -right-16 -bottom-12 h-40 w-40 rounded-full bg-[#8b5cf633] blur-3xl" />
-          <div className="relative flex items-center justify-between gap-4 flex-wrap">
-            <div>
-              <p className="text-sm text-[#7b7f8d]">Nebula Canvas</p>
-              <h1 className="text-3xl font-semibold text-white">Your canvases</h1>
-              <p className="text-sm text-[#b2b5c3] mt-1">Organize, explore, and launch your AI workflows.</p>
+    <main className="relative min-h-[100dvh] overflow-y-auto bg-[#07090d] px-4 py-5 text-white sm:px-6 lg:px-10">
+      <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(125,211,252,0.08),transparent_28%,rgba(15,23,42,0.42)_68%,transparent)]" />
+      <div className="relative mx-auto flex w-full max-w-[1480px] flex-col gap-6">
+        <nav className="flex items-center justify-between gap-4 rounded-[28px] border border-white/[0.08] bg-[#0a0d12]/70 px-4 py-3 shadow-[0_22px_80px_rgba(2,6,12,0.45),inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[#7dd3fc]/25 bg-[#0f1720] text-sm font-semibold text-[#bae6fd] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
+              N
             </div>
-            <div className="flex gap-2 items-center">
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search canvases..."
-                className="bg-[#0f1116]/80 border border-white/10 text-sm px-3 py-2 rounded-xl text-white focus:outline-none focus:border-white/20"
-              />
+            <div>
+              <div className="text-sm font-semibold text-white">Nebula Canvas</div>
+              <div className="text-xs text-[#8792a5]">{resultLabel}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              className="hidden items-center gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-sm font-medium text-[#d7deea] hover:border-[#7dd3fc]/30 hover:bg-white/[0.07] sm:flex"
+              onClick={onCreateDemo}
+            >
+              <Sparkles size={16} />
+              Sample
+            </button>
+            <button
+              className="flex items-center gap-2 rounded-2xl bg-[#f8fafc] px-4 py-2 text-sm font-semibold text-[#081018] shadow-[0_12px_32px_rgba(125,211,252,0.16)] hover:bg-white"
+              onClick={onCreateBlank}
+            >
+              <Plus size={16} />
+              New canvas
+            </button>
+          </div>
+        </nav>
+
+        <section className="grid gap-5 lg:grid-cols-[minmax(0,1.05fr)_minmax(360px,0.95fr)]">
+          <div className="rounded-[34px] border border-white/[0.08] bg-[#0b0f15]/78 p-6 shadow-[0_28px_100px_rgba(2,6,12,0.55),inset_0_1px_0_rgba(255,255,255,0.06)] backdrop-blur-xl md:p-8">
+            <div className="max-w-3xl">
+              <p className="mb-3 text-xs font-semibold uppercase tracking-[0.22em] text-[#7dd3fc]">Workspace</p>
+              <h1 className="text-balance text-5xl font-semibold leading-[0.95] tracking-tight text-white md:text-6xl">
+                Build the chain, inspect the result.
+              </h1>
+              <p className="mt-5 max-w-[58ch] text-base leading-7 text-[#aab4c2]">
+                A local canvas for linked text and image runs, saved on this machine.
+              </p>
+            </div>
+
+            <div className="mt-8 grid gap-3 md:grid-cols-[minmax(0,1fr)_150px_96px]">
+              <label className="relative block">
+                <Search className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[#6f7a8c]" size={18} />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search canvases"
+                  className="h-[52px] w-full rounded-2xl border border-white/[0.08] bg-[#070a0f]/80 py-3 pl-11 pr-4 text-sm text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] placeholder:text-[#687386] focus:border-[#7dd3fc]/45 focus:outline-none"
+                />
+              </label>
               <select
                 value={sortKey}
                 onChange={(e) => setSortKey(e.target.value as 'recent' | 'name')}
-                className="bg-[#0f1116]/80 border border-white/10 text-sm px-3 py-2 rounded-xl text-white focus:outline-none focus:border-white/20"
+                className="h-[52px] rounded-2xl border border-white/[0.08] bg-[#070a0f]/80 px-4 py-3 text-sm font-medium text-white focus:border-[#7dd3fc]/45 focus:outline-none"
                 title="Sort canvases"
               >
                 <option value="recent">Recent</option>
                 <option value="name">Name</option>
               </select>
               <button
-                className="px-3 py-2 rounded-xl bg-[#0f1116]/80 border border-white/10 text-sm text-white hover:bg-[#181b22] transition"
+                className="h-[52px] rounded-2xl border border-white/[0.08] bg-white/[0.04] px-4 py-3 text-sm font-medium text-[#d7deea] hover:bg-white/[0.07]"
                 onClick={() => setQuery('')}
               >
                 Clear
               </button>
-              <button
-                className="px-4 py-2 rounded-xl bg-white text-black text-sm font-medium hover:scale-[1.02] transition shadow-lg"
-                onClick={onCreateBlank}
-              >
-                <Plus size={16} className="inline mr-2" /> New canvas
-              </button>
-              <button
-                className="px-4 py-2 rounded-xl bg-[#111318] border border-white/10 text-sm text-white hover:bg-[#181b22] transition"
-                onClick={onCreateDemo}
-              >
-                Sample template
-              </button>
             </div>
-          </div>
-          <div className="relative mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm text-[#b2b5c3]">
-            <div className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3">
-              <div className="text-xs text-[#7b7f8d]">Total canvases</div>
-              <div className="text-lg text-white font-semibold">{projects.length}</div>
-            </div>
-            <div className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3">
-              <div className="text-xs text-[#7b7f8d]">Sort</div>
-              <div className="text-lg text-white font-semibold capitalize">{sortKey}</div>
-            </div>
-            <div className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3 col-span-2 sm:col-span-1">
-              <div className="text-xs text-[#7b7f8d]">Search</div>
-              <div className="text-lg text-white font-semibold truncate">{query || '—'}</div>
-            </div>
-            <div className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3 col-span-2 sm:col-span-1">
-              <div className="text-xs text-[#7b7f8d]">Tip</div>
-              <div className="text-lg text-white font-semibold">Drag & connect freely</div>
-            </div>
-          </div>
-        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtered.length === 0 && (
-            <div className="col-span-full text-[#7b7f8d] bg-[#0a0c10] border border-white/5 rounded-2xl p-6 text-center">
-              No canvases match. Create or clear the search.
+            <div className="mt-8 grid grid-cols-3 divide-x divide-white/[0.08] border-y border-white/[0.08] py-4">
+              <div className="px-2 first:pl-0">
+                <div className="font-mono text-2xl text-white">{projects.length}</div>
+                <div className="mt-1 text-xs text-[#7d8797]">Canvases</div>
+              </div>
+              <div className="px-5">
+                <div className="font-mono text-2xl text-white">{filtered.length}</div>
+                <div className="mt-1 text-xs text-[#7d8797]">Visible</div>
+              </div>
+              <div className="px-5">
+                <div className="font-mono text-2xl text-white">{latestLabel}</div>
+                <div className="mt-1 text-xs text-[#7d8797]">Latest</div>
+              </div>
+            </div>
+          </div>
+
+          <aside className="relative min-h-[360px] overflow-hidden rounded-[34px] border border-white/[0.08] bg-[#0b0f15] p-5 shadow-[0_28px_100px_rgba(2,6,12,0.5),inset_0_1px_0_rgba(255,255,255,0.06)]">
+            <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.026)_1px,transparent_1px),linear-gradient(rgba(255,255,255,0.026)_1px,transparent_1px)] bg-[length:24px_24px]" />
+            <div className="relative flex items-center justify-between">
+              <div>
+                <div className="text-xs font-medium uppercase tracking-[0.2em] text-[#7d8797]">Preview</div>
+                <div className="mt-1 text-lg font-semibold text-white">Default chain</div>
+              </div>
+              <div className="rounded-xl border border-[#7dd3fc]/20 bg-[#7dd3fc]/10 px-3 py-1 text-xs font-medium text-[#bae6fd]">OpenAI</div>
+            </div>
+            <div className="relative mt-8 h-[250px]">
+              <div className="absolute left-2 top-5 w-[42%] rounded-[22px] border border-[#99f6e4]/20 bg-[#07120f]/88 p-4 shadow-[0_18px_48px_rgba(0,0,0,0.28)]">
+                <div className="mb-3 flex items-center gap-2 text-xs text-[#99f6e4]">
+                  <Type size={14} />
+                  Input
+                </div>
+                <div className="h-2.5 w-3/4 rounded-full bg-white/15" />
+                <div className="mt-2 h-2.5 w-1/2 rounded-full bg-white/10" />
+              </div>
+              <div className="absolute left-[38%] top-[88px] h-px w-[24%] bg-[#7dd3fc]/45" />
+              <div className="absolute left-[44%] top-[58px] w-[38%] rounded-[22px] border border-white/[0.09] bg-[#10151d]/90 p-4 shadow-[0_18px_48px_rgba(0,0,0,0.3)]">
+                <div className="mb-3 flex items-center gap-2 text-xs text-[#d7deea]">
+                  <Box size={14} />
+                  Prompt
+                </div>
+                <div className="h-2.5 w-5/6 rounded-full bg-white/15" />
+                <div className="mt-2 h-2.5 w-2/3 rounded-full bg-white/10" />
+              </div>
+              <div className="absolute left-[63%] top-[171px] h-px w-[20%] bg-[#7dd3fc]/45" />
+              <div className="absolute bottom-0 right-1 w-[42%] rounded-[22px] border border-[#7dd3fc]/24 bg-[#081521]/92 p-4 shadow-[0_18px_48px_rgba(0,0,0,0.34)]">
+                <div className="mb-3 flex items-center gap-2 text-xs text-[#bae6fd]">
+                  <ImageIcon size={14} />
+                  Output
+                </div>
+                <div className="aspect-[16/9] rounded-2xl border border-white/[0.08] bg-[linear-gradient(135deg,#0f172a,#132235)]" />
+              </div>
+            </div>
+          </aside>
+        </section>
+
+        <section className="pb-10">
+          <div className="mb-4 flex items-end justify-between gap-4">
+            <div>
+              <h2 className="text-2xl font-semibold tracking-tight text-white">Recent canvases</h2>
+              <p className="mt-1 text-sm text-[#8b96a8]">{query ? 'Filtered results' : 'Saved locally'}</p>
+            </div>
+            <button
+              className="hidden items-center gap-2 rounded-2xl border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-sm font-medium text-[#d7deea] hover:bg-white/[0.07] sm:flex"
+              onClick={onCreateBlank}
+            >
+              <Plus size={16} />
+              Blank canvas
+            </button>
+          </div>
+
+          {filtered.length === 0 ? (
+            <div className="rounded-[30px] border border-dashed border-white/[0.12] bg-[#0a0d12]/72 p-8 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+              <FolderOpen className="mx-auto text-[#7dd3fc]" size={36} />
+              <h3 className="mt-4 text-xl font-semibold text-white">No canvases found</h3>
+              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#8b96a8]">
+                Create a blank canvas or load the sample template.
+              </p>
+              <div className="mt-5 flex justify-center gap-2">
+                <button className="rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-[#081018]" onClick={onCreateBlank}>
+                  New canvas
+                </button>
+                <button className="rounded-2xl border border-white/[0.08] bg-white/[0.04] px-4 py-2 text-sm text-white" onClick={onCreateDemo}>
+                  Sample
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {filtered.map((project, index) => (
+                <article
+                  key={project.id}
+                  className="group relative overflow-hidden rounded-[28px] border border-white/[0.08] bg-[#0b0f15]/82 p-4 shadow-[0_18px_58px_rgba(2,6,12,0.42),inset_0_1px_0_rgba(255,255,255,0.05)] transition duration-300 hover:-translate-y-1 hover:border-[#7dd3fc]/28 hover:bg-[#0e131b]"
+                  style={{ animationDelay: `${index * 55}ms` }}
+                >
+                  <div className="relative mb-4 h-36 overflow-hidden rounded-[22px] border border-white/[0.07] bg-[#070a0f]">
+                    <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(255,255,255,0.025)_1px,transparent_1px),linear-gradient(rgba(255,255,255,0.025)_1px,transparent_1px)] bg-[length:18px_18px]" />
+                    <div className="absolute left-4 top-5 h-12 w-28 rounded-2xl border border-[#99f6e4]/20 bg-[#0b1a16]" />
+                    <div className="absolute left-[132px] top-[48px] h-px w-16 bg-[#7dd3fc]/38" />
+                    <div className="absolute right-5 top-12 h-14 w-32 rounded-2xl border border-[#7dd3fc]/20 bg-[#0d1824]" />
+                    <div className="absolute bottom-4 left-5 right-5 flex items-center justify-between text-[10px] text-[#6f7a8c]">
+                      <span>local</span>
+                      <span className="font-mono">{new Date(project.updatedAt).toLocaleDateString()}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <h3 className="truncate text-lg font-semibold text-white">{project.name}</h3>
+                      <div className="mt-1 flex items-center gap-2 text-xs text-[#8b96a8]">
+                        <Clock3 size={13} />
+                        {new Date(project.updatedAt).toLocaleString()}
+                      </div>
+                    </div>
+                    <button
+                      className="shrink-0 rounded-2xl bg-white px-3 py-2 text-sm font-semibold text-[#081018] hover:bg-[#eaf6fb]"
+                      onClick={() => onOpen(project)}
+                    >
+                      <ArrowRight size={17} />
+                    </button>
+                  </div>
+                  <div className="mt-4 grid grid-cols-3 gap-2">
+                    <button className="rounded-xl border border-white/[0.08] bg-white/[0.035] px-3 py-2 text-xs text-[#d7deea] hover:bg-white/[0.07]" onClick={() => onRename(project)}>
+                      Rename
+                    </button>
+                    <button className="rounded-xl border border-white/[0.08] bg-white/[0.035] px-3 py-2 text-xs text-[#d7deea] hover:bg-white/[0.07]" onClick={() => onDuplicate(project)}>
+                      Duplicate
+                    </button>
+                    <button className="rounded-xl border border-red-400/25 bg-red-500/[0.06] px-3 py-2 text-xs text-red-100 hover:bg-red-500/[0.1]" onClick={() => onDelete(project)}>
+                      Delete
+                    </button>
+                  </div>
+                </article>
+              ))}
             </div>
           )}
-          {filtered.map((project) => (
-            <div
-              key={project.id}
-              className="bg-[#111318] border border-white/10 rounded-2xl p-4 hover:border-white/20 transition flex flex-col gap-2"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-white font-medium truncate">{project.name}</span>
-                <span className="text-[10px] text-[#7b7f8d]">{new Date(project.updatedAt).toLocaleString()}</span>
-              </div>
-              <p className="text-sm text-[#7b7f8d]">Manage and open this canvas.</p>
-              <div className="flex gap-2 pt-1">
-                <button
-                  className="flex-1 px-3 py-2 rounded-xl bg-white text-black text-sm font-medium hover:scale-[1.01] transition"
-                  onClick={() => onOpen(project)}
-                >
-                  Open
-                </button>
-                <button
-                  className="px-3 py-2 rounded-xl bg-[#0f1116] border border-white/10 text-xs text-white hover:bg-[#181b22] transition"
-                  onClick={() => onRename(project)}
-                >
-                  Rename
-                </button>
-                <button
-                  className="px-3 py-2 rounded-xl bg-[#0f1116] border border-white/10 text-xs text-white hover:bg-[#181b22] transition"
-                  onClick={() => onDuplicate(project)}
-                >
-                  Duplicate
-                </button>
-                <button
-                  className="px-3 py-2 rounded-xl bg-[#1a0f0f] border border-red-400/40 text-xs text-red-200 hover:bg-[#220c0c] transition"
-                  onClick={() => onDelete(project)}
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
+        </section>
       </div>
-    </div>
+    </main>
   );
 };
 
@@ -1025,8 +1312,9 @@ const AssetsPanel: React.FC<{
   onUploadFile: (file: File) => void;
   onAddUrl: (url: string) => void;
   onApply: (asset: AssetItem) => void;
+  onRemove: (assetId: string) => void;
   canApply: boolean;
-}> = ({ open, onClose, assets, onUploadFile, onAddUrl, onApply, canApply }) => {
+}> = ({ open, onClose, assets, onUploadFile, onAddUrl, onApply, onRemove, canApply }) => {
   const [urlInput, setUrlInput] = useState('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -1063,6 +1351,7 @@ const AssetsPanel: React.FC<{
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (file) onUploadFile(file);
+                e.currentTarget.value = '';
               }}
             />
             <input
@@ -1100,17 +1389,35 @@ const AssetsPanel: React.FC<{
                 <div className="text-sm text-white truncate">{asset.name}</div>
                 <div className="text-[11px] text-[#7b7f8d]">{new Date(asset.createdAt).toLocaleString()}</div>
               </div>
-              <button
-                disabled={!canApply}
-                onClick={() => onApply(asset)}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition ${
-                  canApply
-                    ? 'bg-white text-black hover:scale-[1.02] shadow'
-                    : 'bg-[#111318] text-[#7b7f8d] cursor-not-allowed'
-                }`}
-              >
-                Apply
-              </button>
+              <div className="flex items-center gap-1">
+                <a
+                  href={asset.url}
+                  download={asset.name || 'nebula-asset'}
+                  className="px-2 py-2 rounded-lg bg-[#111318] border border-white/10 text-[#b2b5c3] hover:text-white hover:bg-[#181b22] transition"
+                  title="Download asset"
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <Download size={14} />
+                </a>
+                <button
+                  disabled={!canApply}
+                  onClick={() => onApply(asset)}
+                  className={`px-3 py-2 rounded-lg text-sm font-medium transition ${
+                    canApply
+                      ? 'bg-white text-black hover:scale-[1.02] shadow'
+                      : 'bg-[#111318] text-[#7b7f8d] cursor-not-allowed'
+                  }`}
+                >
+                  Apply
+                </button>
+                <button
+                  onClick={() => onRemove(asset.id)}
+                  className="px-2 py-2 rounded-lg bg-[#1a0f0f] border border-red-400/30 text-red-200 hover:bg-[#220c0c] transition"
+                  title="Remove asset"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
             </div>
           ))}
         </div>
@@ -1131,6 +1438,7 @@ export default function App() {
   const [preferences, setPreferences] = useState<Preferences>(defaultPreferences);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [openAiApiKey, setOpenAiApiKey] = useState('');
   const [assetsOpen, setAssetsOpen] = useState(false);
   const [assets, setAssets] = useState<AssetItem[]>([]);
   const [draftConnection, setDraftConnection] = useState<{ fromId: string; x: number; y: number } | null>(null);
@@ -1181,7 +1489,7 @@ export default function App() {
         content: type === 'TEXT' ? { text: '' } : { url: '', caption: role === 'input' ? 'Drop a reference image here.' : 'Ready to generate...' },
         status: role === 'input' ? 'success' : 'idle',
         isStale: role !== 'input',
-        modelId: type === 'TEXT' ? 'gpt-5-nano' : 'gemini-3-pro-image-preview',
+        modelId: type === 'TEXT' ? DEFAULT_TEXT_MODEL_ID : DEFAULT_IMAGE_MODEL_ID,
       };
 
       updateData((prev) => ({ ...prev, blocks: [...prev.blocks, newBlock] }));
@@ -1209,6 +1517,30 @@ export default function App() {
     }
     toastTimer.current = window.setTimeout(() => setToast(null), duration);
   }, []);
+
+  const saveOpenAiApiKey = useCallback(
+    (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        showToast('Enter an OpenAI API key first.');
+        return;
+      }
+      setOpenAiApiKey(trimmed);
+      safeSetLocalStorage(OPENAI_API_KEY_STORAGE_KEY, trimmed);
+      showToast('OpenAI key saved locally.');
+    },
+    [showToast],
+  );
+
+  const clearOpenAiApiKey = useCallback(() => {
+    setOpenAiApiKey('');
+    try {
+      localStorage.removeItem(OPENAI_API_KEY_STORAGE_KEY);
+    } catch (error) {
+      console.warn('Failed to clear OpenAI key', error);
+    }
+    showToast('OpenAI key cleared.');
+  }, [showToast]);
 
   const setBlockModel = useCallback(
     (blockId: string, modelId: string) => {
@@ -1255,10 +1587,9 @@ export default function App() {
         }
 
         const upstreamIds = current.connections.filter((c) => c.to === id).map((c) => c.from);
-        const forceUpstream = block.role === 'output';
         for (const upstreamId of upstreamIds) {
           const upstream = current.blocks.find((b) => b.id === upstreamId);
-          if (upstream && (forceUpstream || upstream.isStale || upstream.status !== 'success')) {
+          if (upstream && (upstream.role === 'output' || upstream.isStale || upstream.status !== 'success')) {
             await runWithDeps(upstreamId);
           }
         }
@@ -1271,36 +1602,28 @@ export default function App() {
         try {
           const latest = dataRef.current;
           const latestBlock = latest.blocks.find((b) => b.id === id) ?? block;
-          const inputs = upstreamIds
-            .map((upId) => latest.blocks.find((b) => b.id === upId)?.content)
-            .filter(Boolean) as BlockContent[];
-
-          // Build prompt from upstream + current content (text and image hints)
-          const upstreamText = inputs.map((i) => i.generated || i.text).filter(Boolean).join('\n');
-          const upstreamImagesList = inputs
-            .map((i) => (i.url ? `Reference image: ${i.url}${i.caption ? ` (${i.caption})` : ''}` : ''))
-            .filter(Boolean)
-            .join('\n');
-          // Only keep small, safe image hints (avoid huge data URLs)
-          const upstreamImages = inputs
-            .map((i) => i.url && i.url.startsWith('http') ? `Image: ${i.caption || ''} ${i.url}`.trim() : '')
-            .filter(Boolean)
-            .slice(0, 2) // cap to 2 images to avoid overloading context
-            .join('\n');
+          const upstreamBlocks = upstreamIds
+            .map((upId) => latest.blocks.find((b) => b.id === upId))
+            .filter(Boolean) as Block[];
+          const upstreamContext = upstreamBlocks.map(blockContextForFlow).filter(Boolean).join('\n\n---\n\n');
+          const ownText = latestBlock.content.text?.trim() || '';
+          const ownCaption = latestBlock.content.caption?.trim() || '';
+          const ownImagePrompt = ownCaption && !DEFAULT_IMAGE_PROMPTS.has(ownCaption) ? ownCaption : '';
 
           const basePrompt =
             latestBlock.type === 'TEXT'
-              ? [latestBlock.content.text || '', upstreamText, upstreamImages ? `\nUpstream images:\n${upstreamImages}` : '']
-                  .filter(Boolean)
-                  .join('\n')
-              : [
-                  upstreamText || '',
-                  upstreamImagesList ? `\n${upstreamImagesList}` : '',
-                  latestBlock.content.caption || '',
-                  latestBlock.content.text || '',
+              ? [
+                  upstreamContext ? `Upstream context:\n${upstreamContext}` : '',
+                  ownText ? `Current node prompt:\n${ownText}` : '',
                 ]
                   .filter(Boolean)
-                  .join('\n')
+                  .join('\n\n')
+              : [
+                  upstreamContext ? `Use this upstream context as the image brief:\n${upstreamContext}` : '',
+                  ownImagePrompt ? `Current image node prompt:\n${ownImagePrompt}` : '',
+                ]
+                  .filter(Boolean)
+                  .join('\n\n')
                   .trim();
 
           const nodeSystemPrompt = [GLOBAL_SYSTEM_PROMPT, latestBlock.systemPrompt?.trim()].filter(Boolean).join('\n\n');
@@ -1309,11 +1632,15 @@ export default function App() {
           // Truncate to protect model context limits
           const promptBase = promptBaseRaw.length > 6000 ? `${promptBaseRaw.slice(0, 6000)}\n...[truncated]` : promptBaseRaw;
 
+          if (!basePrompt.trim() && latestBlock.role !== 'input') {
+            throw new Error('Add a prompt or connect an upstream block before running this node.');
+          }
+
           let result: BlockContent = {};
           if (latestBlock.type === 'TEXT') {
             if (latestBlock.role === 'output') {
-              // For text output nodes, surface upstream text directly (no extra API call).
-              const finalText = upstreamText || latestBlock.content.generated || latestBlock.content.text || 'Run upstream to see output.';
+              // Text output nodes are explicit pass-through sinks for the resolved upstream context.
+              const finalText = upstreamContext || latestBlock.content.generated || latestBlock.content.text || 'Run upstream to see output.';
               result = { text: finalText, generated: finalText };
             } else {
               const resp = await fetch(`${API_BASE}/api/generate-text`, {
@@ -1324,6 +1651,7 @@ export default function App() {
                   modelId: latestBlock.modelId,
                   systemPrompt: nodeSystemPrompt,
                   reasoning: { effort: 'high' },
+                  apiKey: openAiApiKey || undefined,
                 }),
               });
               const raw = await resp.text();
@@ -1337,12 +1665,13 @@ export default function App() {
             const resp = await fetch(`${API_BASE}/api/generate-image`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ prompt: promptBase, modelId: latestBlock.modelId, systemPrompt: nodeSystemPrompt }),
+              body: JSON.stringify({ prompt: promptBase, modelId: latestBlock.modelId, systemPrompt: nodeSystemPrompt, apiKey: openAiApiKey || undefined }),
             });
             const raw = await resp.text();
             const data = raw ? (() => { try { return JSON.parse(raw); } catch { return { error: raw }; } })() : {};
             if (!resp.ok) throw new Error((data as any).error || raw || 'Image generation failed');
-            result = { url: (data as any).url, caption: latestBlock.content.caption || 'Generated image' };
+            const generatedCaption = ownImagePrompt || (upstreamContext ? upstreamContext.slice(0, 240) : 'Generated image');
+            result = { url: (data as any).url, caption: generatedCaption };
           }
 
           updateData((prev) => {
@@ -1394,7 +1723,9 @@ export default function App() {
           console.error(error);
           const message = String(error?.message || '');
           if (message.toLowerCase().includes('api key')) {
-            showToast('Add an API key in .env.local to run AI generation.', 3500);
+            showToast('Add an OpenAI API key in Settings to run AI generation.', 3500);
+          } else if (message) {
+            showToast(`Generation failed: ${message.slice(0, 120)}`, 4500);
           } else {
             showToast(`Generation failed. Check the backend at ${API_BASE}.`, 3500);
           }
@@ -1409,7 +1740,7 @@ export default function App() {
 
       await runWithDeps(blockId);
     },
-    [showToast, updateData],
+    [openAiApiKey, showToast, updateData],
   );
 
   const handleWheel = (e: React.WheelEvent) => {
@@ -1472,7 +1803,7 @@ export default function App() {
     }
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = useCallback(() => {
     if (blockDrag.current && preferences.snapToGrid) {
       const { id } = blockDrag.current;
       updateData((prev) => ({
@@ -1484,7 +1815,7 @@ export default function App() {
     blockDrag.current = null;
     document.body.style.cursor = 'default';
     setDraftConnection(null);
-  };
+  }, [preferences.snapToGrid, snap, updateData]);
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -1499,7 +1830,14 @@ export default function App() {
   const startBlockDrag = (e: React.MouseEvent<HTMLDivElement>, block: Block) => {
     // Don't drag when interacting with text inputs
     const target = e.target as HTMLElement;
-    if (target.closest('textarea') || target.closest('input') || target.closest('[contenteditable="true"]')) {
+    if (
+      target.closest('textarea') ||
+      target.closest('input') ||
+      target.closest('select') ||
+      target.closest('button') ||
+      target.closest('a') ||
+      target.closest('[contenteditable="true"]')
+    ) {
       return;
     }
     e.stopPropagation();
@@ -1519,7 +1857,35 @@ export default function App() {
     (id: string, value: string) => {
       updateData((prev) => ({
         ...prev,
-        blocks: prev.blocks.map((b) => (b.id === id ? { ...b, content: { ...b.content, text: value }, isStale: false, status: 'idle' } : b)),
+        blocks: prev.blocks.map((b) => {
+          if (b.id !== id) return b;
+          const { generated, ...contentWithoutGenerated } = b.content;
+          return {
+            ...b,
+            content: { ...contentWithoutGenerated, text: value },
+            isStale: b.role !== 'input',
+            status: b.role === 'input' ? 'success' : 'idle',
+          };
+        }),
+      }));
+      markDownstreamStale(id);
+    },
+    [markDownstreamStale, updateData],
+  );
+
+  const onEditCaption = useCallback(
+    (id: string, value: string) => {
+      updateData((prev) => ({
+        ...prev,
+        blocks: prev.blocks.map((b) => {
+          if (b.id !== id) return b;
+          return {
+            ...b,
+            content: { ...b.content, caption: value },
+            isStale: b.role !== 'input',
+            status: b.role === 'input' ? 'success' : 'idle',
+          };
+        }),
       }));
       markDownstreamStale(id);
     },
@@ -1555,6 +1921,13 @@ export default function App() {
     (fromId: string, toId: string) => {
       if (fromId === toId) return;
       updateData((prev) => {
+        const fromBlock = prev.blocks.find((block) => block.id === fromId);
+        const toBlock = prev.blocks.find((block) => block.id === toId);
+        if (!fromBlock || !toBlock) return prev;
+        if (toBlock.role === 'input') {
+          showToast('Input nodes start a flow and cannot receive connections.');
+          return prev;
+        }
         const exists = prev.connections.some((c) => c.from === fromId && c.to === toId);
         if (exists) return prev;
         if (wouldCreateCycle(prev.connections, fromId, toId)) {
@@ -1612,6 +1985,14 @@ export default function App() {
 
   const addAssetFromFile = useCallback(
     (file: File) => {
+      if (!file.type.startsWith('image/')) {
+        showToast('Upload an image file.');
+        return;
+      }
+      if (file.size > 6 * 1024 * 1024) {
+        showToast('Image is larger than 6 MB. Use a smaller asset.');
+        return;
+      }
       const reader = new FileReader();
       reader.onload = () => {
         const url = typeof reader.result === 'string' ? reader.result : '';
@@ -1624,6 +2005,7 @@ export default function App() {
         setAssets((prev) => [newAsset, ...prev].slice(0, 50));
         showToast('Asset added');
       };
+      reader.onerror = () => showToast('Could not read that image file.');
       reader.readAsDataURL(file);
     },
     [showToast],
@@ -1645,6 +2027,14 @@ export default function App() {
       };
       setAssets((prev) => [newAsset, ...prev].slice(0, 50));
       showToast('Asset added from URL');
+    },
+    [showToast],
+  );
+
+  const removeAsset = useCallback(
+    (assetId: string) => {
+      setAssets((prev) => prev.filter((asset) => asset.id !== assetId));
+      showToast('Asset removed');
     },
     [showToast],
   );
@@ -1685,10 +2075,10 @@ export default function App() {
   }, [runBlock, selectedIds, showToast]);
 
   const runOutputBlocks = useCallback(async () => {
-    const outputs = dataRef.current.blocks.filter((block) => block.role === 'output');
-    const targets = outputs.length ? outputs : dataRef.current.blocks.filter((block) => !dataRef.current.connections.some((connection) => connection.from === block.id));
+    const outgoingIds = new Set(dataRef.current.connections.map((connection) => connection.from));
+    const targets = dataRef.current.blocks.filter((block) => block.role !== 'input' && !outgoingIds.has(block.id));
     if (!targets.length) {
-      showToast('Add an output block or terminal block to run.');
+      showToast('Add a connected flow or terminal block to run.');
       return;
     }
     for (const target of targets) {
@@ -1717,6 +2107,89 @@ export default function App() {
     setSelectedIds(new Set([duplicate.id]));
     showToast('Block duplicated');
   }, [selectedIds, showToast, snap, updateData]);
+
+  const addOutputFromSelected = useCallback(() => {
+    const selectedId = Array.from(selectedIds)[0];
+    const source = dataRef.current.blocks.find((candidate) => candidate.id === selectedId);
+    if (!source) {
+      showToast('Select a source block first');
+      return;
+    }
+    if (source.role === 'output') {
+      showToast('That block is already an output');
+      return;
+    }
+
+    const outputType = source.type;
+    const output: Block = {
+      id: createId('b'),
+      type: outputType,
+      title: outputType === 'TEXT' ? 'Text Output' : 'Image Output',
+      role: 'output',
+      systemPrompt: '',
+      x: snap(source.x + source.width + 180),
+      y: snap(source.y),
+      width: outputType === 'TEXT' ? 360 : 340,
+      content: outputType === 'TEXT' ? { text: '' } : { url: '', caption: 'Ready to render from upstream.' },
+      status: 'idle',
+      isStale: true,
+      modelId: outputType === 'TEXT' ? DEFAULT_TEXT_MODEL_ID : DEFAULT_IMAGE_MODEL_ID,
+    };
+
+    updateData((prev) => ({
+      ...prev,
+      blocks: [...prev.blocks, output],
+      connections: [...prev.connections, { id: createId('c'), from: source.id, to: output.id }],
+    }));
+    setSelectedIds(new Set([output.id]));
+    showToast('Output node added');
+  }, [selectedIds, showToast, snap, updateData]);
+
+  const autoArrangeFlow = useCallback(() => {
+    const snapshot = dataRef.current;
+    if (!snapshot.blocks.length) {
+      showToast('Add blocks before arranging');
+      return;
+    }
+
+    const depthById = new Map<string, number>(snapshot.blocks.map((block) => [block.id, 0]));
+    for (let pass = 0; pass < snapshot.blocks.length; pass += 1) {
+      let changed = false;
+      for (const connection of snapshot.connections) {
+        const nextDepth = (depthById.get(connection.from) ?? 0) + 1;
+        if (nextDepth > (depthById.get(connection.to) ?? 0)) {
+          depthById.set(connection.to, nextDepth);
+          changed = true;
+        }
+      }
+      if (!changed) break;
+    }
+
+    const lanes = new Map<number, Block[]>();
+    snapshot.blocks.forEach((block) => {
+      const depth = depthById.get(block.id) ?? 0;
+      lanes.set(depth, [...(lanes.get(depth) ?? []), block]);
+    });
+
+    const nextPositions = new Map<string, { x: number; y: number }>();
+    [...lanes.entries()].forEach(([depth, blocks]) => {
+      blocks
+        .sort((a, b) => a.y - b.y)
+        .forEach((block, index) => {
+          nextPositions.set(block.id, {
+            x: snap(160 + depth * 460),
+            y: snap(160 + index * 360),
+          });
+        });
+    });
+
+    updateData((prev) => ({
+      ...prev,
+      blocks: prev.blocks.map((block) => ({ ...block, ...(nextPositions.get(block.id) ?? {}) })),
+    }));
+    setView({ x: 80, y: 48, zoom: 0.9 });
+    showToast('Flow arranged');
+  }, [showToast, snap, updateData]);
 
   const exportCanvas = useCallback(() => {
     const payload = {
@@ -1882,6 +2355,10 @@ export default function App() {
       if (assetsRaw) {
         setAssets(JSON.parse(assetsRaw));
       }
+      const savedOpenAiKey = localStorage.getItem(OPENAI_API_KEY_STORAGE_KEY);
+      if (savedOpenAiKey) {
+        setOpenAiApiKey(savedOpenAiKey);
+      }
     } catch (error) {
         console.warn('Failed to load saved state', error);
     }
@@ -1920,6 +2397,7 @@ export default function App() {
         target.closest('select') ||
         target.closest('[contenteditable="true"]');
       if (isFormElement) return;
+      if (mode !== 'canvas') return;
       if (e.key === ' ' && !spaceHeld.current) {
         spaceHeld.current = true;
         document.body.style.cursor = 'grab';
@@ -1964,13 +2442,13 @@ export default function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [addBlock, deleteBlock, duplicateSelectedBlock, runSelected, selectedIds]);
+  }, [addBlock, deleteBlock, duplicateSelectedBlock, mode, runSelected, selectedIds]);
 
   useEffect(() => {
     const onUp = () => handleMouseUp();
     window.addEventListener('mouseup', onUp);
     return () => window.removeEventListener('mouseup', onUp);
-  }, []);
+  }, [handleMouseUp]);
 
   if (mode === 'home') {
     return (
@@ -1988,7 +2466,7 @@ export default function App() {
 
   return (
     <div
-      className="relative w-full h-screen overflow-hidden bg-[#050607] text-white font-sans select-none"
+      className="relative w-full h-[100dvh] overflow-hidden bg-[#07090d] text-white font-sans select-none"
       onWheel={handleWheel}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -2053,6 +2531,7 @@ export default function App() {
               onRun={runBlock}
               onDelete={deleteBlock}
               onEditText={onEditText}
+              onEditCaption={onEditCaption}
               onRename={onRename}
               onStartConnection={(id) => setConnectingFrom(id)}
               onCompleteConnection={(id) => {
@@ -2077,6 +2556,8 @@ export default function App() {
 
       <TopBar
         onFit={fitToContent}
+        onAutoLayout={autoArrangeFlow}
+        onAddOutput={addOutputFromSelected}
         onToggleGrid={() => setPreferences((p) => ({ ...p, showGrid: !p.showGrid }))}
         showGrid={preferences.showGrid}
         onResetView={resetView}
@@ -2109,7 +2590,7 @@ export default function App() {
           setMode('canvas');
           setAssetsOpen(true);
         }}
-        onAdd={(type) => addBlock(type)}
+        onAdd={(type, role) => addBlock(type, undefined, role ?? 'standard')}
         onOpenSettings={() => setSettingsOpen(true)}
         mode={mode}
       />
@@ -2167,7 +2648,15 @@ export default function App() {
       />
     )}
 
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} preferences={preferences} onUpdate={setPreferences} />
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        preferences={preferences}
+        onUpdate={setPreferences}
+        openAiApiKey={openAiApiKey}
+        onSaveOpenAiApiKey={saveOpenAiApiKey}
+        onClearOpenAiApiKey={clearOpenAiApiKey}
+      />
 
       {preferences.showHints && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 text-[#505460] text-[10px] font-mono pointer-events-none bg-[#0a0c10]/80 px-3 py-1.5 rounded-full border border-white/5 backdrop-blur-md">
@@ -2183,6 +2672,7 @@ export default function App() {
         onUploadFile={addAssetFromFile}
         onAddUrl={addAssetFromUrl}
         onApply={applyAssetToSelection}
+        onRemove={removeAsset}
         canApply={selectedIds.size > 0}
       />
     </div>

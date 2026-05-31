@@ -23,7 +23,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, onClose, onAdd }
         </div>
         <div className="flex flex-col">
           <span className="text-sm font-medium text-[#f8f8fb]">Text Generation</span>
-          <span className="text-[11px] text-[#7b7f8d]">Prompt & Chat (Gemini)</span>
+          <span className="text-[11px] text-[#7b7f8d]">Prompt & Chat</span>
         </div>
         <span className="ml-auto text-[10px] text-[#505460] font-mono border border-white/5 px-1.5 py-0.5 rounded">T</span>
       </button>
@@ -34,7 +34,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, onClose, onAdd }
         </div>
         <div className="flex flex-col">
           <span className="text-sm font-medium text-[#f8f8fb]">Image Generation</span>
-          <span className="text-[11px] text-[#7b7f8d]">Stable Diff / Flux / Imagen</span>
+          <span className="text-[11px] text-[#7b7f8d]">OpenAI image generation</span>
         </div>
         <span className="ml-auto text-[10px] text-[#505460] font-mono border border-white/5 px-1.5 py-0.5 rounded">I</span>
       </button>

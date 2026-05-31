@@ -20,46 +20,49 @@ const PORT = process.env.PORT || 3001;
 const openai = process.env.OPENAI_API_KEY
     ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
     : null;
-const GOOGLE_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+const MAX_PROMPT_LENGTH = 12000;
+const DEFAULT_TEXT_MODEL = 'gpt-5.5';
+const DEFAULT_IMAGE_MODEL = 'gpt-image-2';
 
-app.use(cors());
+const cleanName = (value: unknown, fallback = 'Untitled Canvas') =>
+    typeof value === 'string' && value.trim() ? value.trim().slice(0, 120) : fallback;
+
+const cleanPrompt = (value: unknown) =>
+    typeof value === 'string' ? value.trim().slice(0, MAX_PROMPT_LENGTH) : '';
+
+const getOpenAIClient = (apiKey: unknown) => {
+    const requestKey = typeof apiKey === 'string' ? apiKey.trim() : '';
+    if (requestKey) return new OpenAI({ apiKey: requestKey });
+    return openai;
+};
+
+app.use(cors({ origin: process.env.CORS_ORIGIN || true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+app.get('/api/health', (_req, res) => {
+    res.json({
+        ok: true,
+        hasOpenAIKey: Boolean(process.env.OPENAI_API_KEY),
+    });
+});
 
 // Lightweight proxy endpoints for live generation without touching DB
 app.post('/api/generate-text', async (req, res) => {
     try {
-        const { prompt, modelId = 'gpt-5-nano', reasoning } = req.body;
+        const { modelId = DEFAULT_TEXT_MODEL, reasoning, apiKey } = req.body;
+        const prompt = cleanPrompt(req.body.prompt);
         if (!prompt) {
             return res.status(400).json({ error: 'Missing prompt' });
         }
 
-        const wantsGoogle = modelId.includes('gemini');
-        if (wantsGoogle && GOOGLE_API_KEY) {
-            const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${GOOGLE_API_KEY}`;
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                }),
-            });
-            if (!response.ok) {
-                const err = await response.text();
-                throw new Error(err);
-            }
-            const payload = await response.json();
-            const text = payload?.candidates?.[0]?.content?.parts
-                ?.map((part: any) => part.text)
-                .filter(Boolean)
-                .join('\n')
-                .trim();
-            if (!text) throw new Error('No text returned from Gemini');
-            return res.json({ text });
+        if (typeof modelId !== 'string' || !modelId.startsWith('gpt-')) {
+            return res.status(400).json({ error: 'Unsupported OpenAI text model' });
         }
 
-        if (!process.env.OPENAI_API_KEY) {
-            return res.status(400).json({ error: 'Missing API key' });
+        const client = getOpenAIClient(apiKey);
+        if (!client) {
+            return res.status(400).json({ error: 'Missing OpenAI API key' });
         }
         const effort =
             typeof reasoning === 'string'
@@ -68,11 +71,11 @@ app.post('/api/generate-text', async (req, res) => {
                     ? reasoning.effort
                     : 'high';
         const reasoningPayload = effort ? { effort } : undefined;
-        const completion = await openai!.responses.create({
+        const completion = await client.responses.create({
             model: modelId,
             input: [{ role: 'user', content: prompt }],
-            reasoning: reasoningPayload,
-        });
+            ...(reasoningPayload ? { reasoning: reasoningPayload } : {}),
+        } as any);
         const text = completion.output_text;
         res.json({ text });
     } catch (error: any) {
@@ -83,44 +86,28 @@ app.post('/api/generate-text', async (req, res) => {
 
 app.post('/api/generate-image', async (req, res) => {
     try {
-        const { prompt, modelId = 'gemini-3-pro-image-preview', size = '1024x1024' } = req.body;
+        const { modelId = DEFAULT_IMAGE_MODEL, apiKey } = req.body;
+        const prompt = cleanPrompt(req.body.prompt);
+        const allowedSizes = new Set(['1024x1024', '1024x1536', '1536x1024', 'auto']);
+        const size = allowedSizes.has(req.body.size) ? req.body.size : '1024x1024';
         if (!prompt) {
             return res.status(400).json({ error: 'Missing prompt' });
         }
 
-        // If the caller picks a Gemini/Imagen model and we have a Google key, hit Gemini.
-        const wantsGoogle = modelId.includes('gemini') || modelId.includes('imagen');
-        if (wantsGoogle && GOOGLE_API_KEY) {
-            const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${GOOGLE_API_KEY}`;
-            const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                    // Do NOT set response_mime_type; Gemini image returns inlineData when available
-                }),
-            });
-            if (!response.ok) {
-                const err = await response.text();
-                throw new Error(err);
-            }
-            const payload = await response.json();
-            const inline = payload?.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData)?.inlineData;
-            if (!inline?.data) throw new Error('No image data returned');
-            const url = `data:${inline.mimeType || 'image/png'};base64,${inline.data}`;
-            return res.json({ url, prompt });
+        if (typeof modelId !== 'string' || !modelId.startsWith('gpt-image-')) {
+            return res.status(400).json({ error: 'Unsupported OpenAI image model' });
         }
 
-        if (!process.env.OPENAI_API_KEY) {
-            return res.status(400).json({ error: 'Missing API key' });
+        const client = getOpenAIClient(apiKey);
+        if (!client) {
+            return res.status(400).json({ error: 'Missing OpenAI API key' });
         }
 
-        // Default to OpenAI image generation
-        const result = await openai!.images.generate({
-            model: 'gpt-image-1',
+        const result = await client.images.generate({
+            model: modelId,
             prompt,
             size,
-        });
+        } as any);
         const image = result.data?.[0];
         const url = image?.url || (image?.b64_json ? `data:image/png;base64,${image.b64_json}` : '');
         if (!url) {
@@ -140,7 +127,7 @@ app.get('/projects', async (req, res) => {
 });
 
 app.post('/projects', async (req, res) => {
-    const { name } = req.body;
+    const name = cleanName(req.body.name);
     const project = await prisma.project.create({
         data: {
             name,
@@ -186,14 +173,17 @@ app.get('/projects/:projectId/canvas', async (req, res) => {
 // Blocks
 app.post('/blocks', async (req, res) => {
     const { canvasId, type, x, y } = req.body;
+    if (!canvasId || !['TEXT', 'IMAGE'].includes(type)) {
+        return res.status(400).json({ error: 'Invalid canvasId or block type' });
+    }
     const block = await prisma.block.create({
         data: {
             canvasId,
             type,
             title: type === 'TEXT' ? 'New Prompt' : 'New Image',
-            modelId: type === 'TEXT' ? 'gpt-4o-mini' : 'flux-schnell',
-            positionX: x,
-            positionY: y,
+            modelId: type === 'TEXT' ? DEFAULT_TEXT_MODEL : DEFAULT_IMAGE_MODEL,
+            positionX: Number.isFinite(Number(x)) ? Number(x) : 0,
+            positionY: Number.isFinite(Number(y)) ? Number(y) : 0,
             config: type === 'TEXT' ? { promptTemplate: '' } : { prompt: '' },
             isStale: true
         }
@@ -227,8 +217,11 @@ app.delete('/blocks/:id', async (req, res) => {
 // Connections
 app.post('/connections', async (req, res) => {
     const { fromBlockId, toBlockId, kind } = req.body;
+    if (!fromBlockId || !toBlockId || fromBlockId === toBlockId) {
+        return res.status(400).json({ error: 'Invalid connection' });
+    }
     const connection = await prisma.connection.create({
-        data: { fromBlockId, toBlockId, kind }
+        data: { fromBlockId, toBlockId, kind: kind || 'TEXT_TO_TEXT' }
     });
     res.json(connection);
 });

@@ -18,8 +18,10 @@ model Project {
 model Canvas {
   id        String   @id @default(uuid())
   projectId String
-  project   Project  @relation(fields: [projectId], references: [id])
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   blocks    Block[]
+
+  @@index([projectId])
 }
 
 model Block {
@@ -33,12 +35,14 @@ model Block {
   config      Json
   outputRefId String?
   isStale     Boolean  @default(false)
-  canvas      Canvas   @relation(fields: [canvasId], references: [id])
+  canvas      Canvas   @relation(fields: [canvasId], references: [id], onDelete: Cascade)
   
   // Relations for connections
   outgoingConnections Connection[] @relation("FromBlock")
   incomingConnections Connection[] @relation("ToBlock")
   generations         Generation[]
+
+  @@index([canvasId])
 }
 
 model Connection {
@@ -47,8 +51,11 @@ model Connection {
   toBlockId   String
   kind        String // "TEXT_TO_TEXT" | "TEXT_TO_IMAGE" | "IMAGE_TO_IMAGE"
   
-  fromBlock   Block  @relation("FromBlock", fields: [fromBlockId], references: [id])
-  toBlock     Block  @relation("ToBlock", fields: [toBlockId], references: [id])
+  fromBlock   Block  @relation("FromBlock", fields: [fromBlockId], references: [id], onDelete: Cascade)
+  toBlock     Block  @relation("ToBlock", fields: [toBlockId], references: [id], onDelete: Cascade)
+
+  @@unique([fromBlockId, toBlockId])
+  @@index([toBlockId])
 }
 
 model Generation {
@@ -60,8 +67,11 @@ model Generation {
   textOutput String?
   assetId    String?
   
-  block      Block    @relation(fields: [blockId], references: [id])
+  block      Block    @relation(fields: [blockId], references: [id], onDelete: Cascade)
   asset      Asset?   @relation(fields: [assetId], references: [id])
+
+  @@index([blockId, createdAt])
+  @@index([assetId])
 }
 
 model Asset {

@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  background-color: #050607;
+  background-color: #07090d;
   color: #f8f8fb;
 }
 
@@ -19,10 +19,25 @@ body,
 
 body {
   margin: 0;
-  font-family: 'Inter', sans-serif;
-  background-color: #050607;
+  font-family: 'Outfit', sans-serif;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(51, 78, 104, 0.22), transparent 34rem),
+    linear-gradient(135deg, #07090d 0%, #0a0d12 46%, #080a0f 100%);
   color: #f8f8fb;
   overflow: hidden;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999;
+  opacity: 0.22;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
+  background-size: 3px 3px;
 }
 
 .font-mono {
@@ -31,6 +46,19 @@ body {
 
 button {
   outline: none;
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), border-color 180ms ease, background-color 180ms ease, color 180ms ease;
+}
+
+button:active {
+  transform: translateY(1px) scale(0.98);
+}
+
+button:focus-visible,
+textarea:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid rgba(125, 211, 252, 0.8);
+  outline-offset: 2px;
 }
 
 ::-webkit-scrollbar {

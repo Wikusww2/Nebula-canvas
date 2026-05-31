@@ -54,7 +54,7 @@ export interface Asset {
 
 export interface ModelConfig {
     id: string;
-    provider: "openai" | "google" | "other";
+    provider: "openai" | "other";
     type: "text" | "image";
     displayName: string;
     defaultParams: Record<string, any>;

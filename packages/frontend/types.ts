@@ -62,6 +62,6 @@ export interface ModelConfig {
   id: string;
   type: BlockType;
   name: string;
-  provider: 'gemini' | 'mock';
+  provider: 'openai' | 'mock';
   description: string;
 }

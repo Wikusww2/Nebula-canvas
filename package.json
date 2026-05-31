@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "concurrently \"npm run dev --workspace=@nebula/backend\" \"npm run dev --workspace=@nebula/frontend\"",
     "build": "npm run build --workspaces",
-    "test": "npm run test --workspaces"
+    "test": "npm run typecheck",
+    "typecheck": "npm run build --workspace=@nebula/shared && npm run typecheck --workspace=@nebula/frontend"
   },
   "devDependencies": {
     "@types/node": "^24.10.1",

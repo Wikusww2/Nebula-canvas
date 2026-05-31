@@ -1,5 +1,5 @@
 import { Block, Connection, Project } from '../types';
-import { generateText, generateImage } from './geminiService';
+import { generateText, generateImage } from './openaiService';
 
 // Mock execution delay to simulate network
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -57,7 +57,7 @@ export const executeBlock = async (
   }
 
   // 3. Execute Model
-  const useRealApi = block.modelId.startsWith('gemini') && process.env.API_KEY;
+  const useRealApi = block.modelId.startsWith('gpt-');
 
   if (block.type === 'TEXT') {
     if (useRealApi) {

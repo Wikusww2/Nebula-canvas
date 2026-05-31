@@ -97,10 +97,11 @@ export const BlockNode: React.FC<BlockNodeProps> = ({
           {/* Model Selector Pill */}
           <div className="relative">
             <button 
+              onMouseDown={(e) => e.stopPropagation()}
               onClick={toggleModelMenu}
               className="flex items-center gap-1 text-[10px] uppercase font-medium tracking-wider text-[#7b7f8d] pl-2 pr-1.5 py-0.5 rounded-full bg-white/5 border border-white/5 hover:bg-white/10 hover:text-white transition-colors"
             >
-              <span className="truncate max-w-[80px]">{block.modelId.replace('gemini-', '').replace('mock-', '')}</span>
+              <span className="truncate max-w-[80px]">{block.modelId.replace('mock-', '')}</span>
               <ChevronDown size={10} />
             </button>
             

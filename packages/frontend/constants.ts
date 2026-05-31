@@ -20,12 +20,27 @@ export const THEME = {
 };
 
 export const AVAILABLE_MODELS: ModelConfig[] = [
-  { id: 'gemini-2.5-flash', type: 'TEXT', name: 'Gemini 2.5 Flash', provider: 'gemini', description: 'Fast, efficient text generation' },
-  { id: 'gemini-3-pro-preview', type: 'TEXT', name: 'Gemini 3 Pro', provider: 'gemini', description: 'Complex reasoning tasks' },
-  { id: 'gemini-2.5-flash-image', type: 'IMAGE', name: 'Gemini Flash Image', provider: 'gemini', description: 'High speed image generation' },
+  { id: 'gpt-5.5', type: 'TEXT', name: 'GPT-5.5', provider: 'openai', description: 'Best for complex reasoning and coding' },
+  { id: 'gpt-5.4', type: 'TEXT', name: 'GPT-5.4', provider: 'openai', description: 'Balanced frontier text generation' },
+  { id: 'gpt-5.4-mini', type: 'TEXT', name: 'GPT-5.4 Mini', provider: 'openai', description: 'Lower-latency, lower-cost text generation' },
+  { id: 'gpt-5.4-nano', type: 'TEXT', name: 'GPT-5.4 Nano', provider: 'openai', description: 'Fastest OpenAI text option' },
+  { id: 'gpt-image-2', type: 'IMAGE', name: 'GPT Image 2', provider: 'openai', description: 'Latest OpenAI image generation' },
+  { id: 'gpt-image-1.5', type: 'IMAGE', name: 'GPT Image 1.5', provider: 'openai', description: 'High-quality OpenAI image generation' },
+  { id: 'gpt-image-1', type: 'IMAGE', name: 'GPT Image 1', provider: 'openai', description: 'Previous OpenAI image generation' },
+  { id: 'gpt-image-1-mini', type: 'IMAGE', name: 'GPT Image 1 Mini', provider: 'openai', description: 'Cost-efficient image generation' },
   { id: 'mock-text', type: 'TEXT', name: 'Mock Text', provider: 'mock', description: 'Offline simulation' },
   { id: 'mock-image', type: 'IMAGE', name: 'Mock Image', provider: 'mock', description: 'Offline random images' },
 ];
+
+const demoImageUrl = (title: string, accent: string) =>
+  `data:image/svg+xml,${encodeURIComponent(`
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 800">
+      <rect width="640" height="800" fill="#050607"/>
+      <circle cx="320" cy="310" r="230" fill="${accent}" opacity="0.24"/>
+      <path d="M320 190 C246 112 140 175 205 285 C92 335 155 470 275 420 C285 555 438 555 448 420 C565 470 628 335 435 285 C500 175 395 112 320 190Z" fill="none" stroke="${accent}" stroke-width="10" stroke-linecap="round"/>
+      <text x="320" y="650" fill="#f8fafc" font-family="Arial, sans-serif" font-size="34" font-weight="700" text-anchor="middle">${title}</text>
+    </svg>
+  `)}`;
 
 export const DEMO_PROJECT: Project = {
   id: 'demo-glass-flower',
@@ -36,12 +51,12 @@ export const DEMO_PROJECT: Project = {
       id: 'b1',
       type: 'IMAGE',
       title: 'Glass Flower Reference',
-      modelId: 'gemini-2.5-flash-image',
+      modelId: 'gpt-image-2',
       x: 150,
       y: 150,
       width: 300,
       content: {
-        url: 'https://images.unsplash.com/photo-1695503460699-299f02275466?q=80&w=3132&auto=format&fit=crop',
+        url: demoImageUrl('Glass Flower', '#7dd3fc'),
         caption: 'A radiant, translucent flower glows softly at its centre...',
         imagePrompt: 'A radiant, translucent flower glows softly at its centre'
       },
@@ -52,7 +67,7 @@ export const DEMO_PROJECT: Project = {
       id: 'b2',
       type: 'TEXT',
       title: 'Extract Palette',
-      modelId: 'gemini-2.5-flash',
+      modelId: 'gpt-5.5',
       x: 550,
       y: 200,
       width: 280,
@@ -68,12 +83,12 @@ export const DEMO_PROJECT: Project = {
       id: 'b3',
       type: 'IMAGE',
       title: 'Generated Variant',
-      modelId: 'gemini-2.5-flash-image',
+      modelId: 'gpt-image-2',
       x: 950,
       y: 180,
       width: 300,
       content: {
-        url: 'https://images.unsplash.com/photo-1663486333792-628b75c88998?q=80&w=2160&auto=format&fit=crop',
+        url: demoImageUrl('Flowers Blooming', '#fbbf24'),
         caption: 'Variations generated based on the extracted palette.',
         imagePrompt: 'A field of flowers using this palette: {{input1}}'
       },
